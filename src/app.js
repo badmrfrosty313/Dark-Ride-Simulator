@@ -134,9 +134,10 @@
   let completedCycles = 0;
   let simulationSeconds = 0;
   let lastFrameTime = performance.now();
-  const blockReservations = new Map();
+  const reservationTable = new window.DarkRideRouteGraph.ReservationTable();
+  const blockReservations = reservationTable.reservations;
   const blockHoldLog = new Set();
-  const lockedBlocks = new Set();
+  const lockedBlocks = reservationTable.locked;
   const safetyLatch = new Set();
   const safetyViolationFrames = new Map();
 
@@ -419,26 +420,22 @@
   }
 
   function lockBlock(blockId, source = "Operator") {
-    const existingOwner = blockReservations.get(blockId);
+    const existingOwner = reservationTable.lock(blockId);
 
     if (existingOwner) {
       const ownerVehicle = vehicles.find((vehicle) => vehicle.id === existingOwner);
-      blockReservations.delete(blockId);
       if (ownerVehicle && ownerVehicle.reservedBlockId === blockId) {
         ownerVehicle.reservedBlockId = null;
       }
       logEvent("REVOKE", `${blockId} reservation revoked from ${existingOwner} due to lockout.`, "warn");
     }
 
-    lockedBlocks.add(blockId);
     logEvent("LOCKOUT", `${blockId} removed from service by ${source}.`, "warn");
   }
 
   function releaseVehicleReservation(vehicle) {
     if (!vehicle || !vehicle.reservedBlockId) return;
-    if (blockReservations.get(vehicle.reservedBlockId) === vehicle.id) {
-      blockReservations.delete(vehicle.reservedBlockId);
-    }
+    reservationTable.release(vehicle.reservedBlockId, vehicle.id);
     vehicle.reservedBlockId = null;
   }
 
@@ -495,7 +492,7 @@
       ) continue;
 
       releaseVehicleReservation(vehicle);
-      blockReservations.set(next.id, vehicle.id);
+      if (!reservationTable.reserve(next.id, vehicle.id)) continue;
       vehicle.reservedBlockId = next.id;
 
       logEvent("RESERVE", `${vehicle.id} reserved ${next.id} // ${next.name}.`, "good");
@@ -1298,9 +1295,8 @@
     guestArrivalCarry = 0;
     pendingScenario = null;
     maintenanceBranchOwner = null;
-    blockReservations.clear();
+    reservationTable.clear();
     blockHoldLog.clear();
-    lockedBlocks.clear();
     safetyLatch.clear();
     safetyViolationFrames.clear();
     for (const state of showStates.values()) {
@@ -1390,7 +1386,7 @@
     const blockId = ui.blockSelect.value;
 
     if (lockedBlocks.has(blockId)) {
-      lockedBlocks.delete(blockId);
+      reservationTable.unlock(blockId);
       logEvent("LOCKOUT", `${blockId} returned to service.`, "good");
     } else {
       lockBlock(blockId);
@@ -1422,7 +1418,7 @@
 
   ui.clearScenarioBtn.addEventListener("click", () => {
     pendingScenario = null;
-    lockedBlocks.clear();
+    reservationTable.clear();
     autoDispatch = false;
     rideStopped = false;
     rideStopSource = "NONE";

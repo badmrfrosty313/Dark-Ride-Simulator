@@ -284,6 +284,22 @@
     return true;
   }
 
+  function lockBlock(blockId, source = "Operator") {
+    const existingOwner = blockReservations.get(blockId);
+
+    if (existingOwner) {
+      const ownerVehicle = vehicles.find((vehicle) => vehicle.id === existingOwner);
+      blockReservations.delete(blockId);
+      if (ownerVehicle && ownerVehicle.reservedBlockId === blockId) {
+        ownerVehicle.reservedBlockId = null;
+      }
+      logEvent("REVOKE", `${blockId} reservation revoked from ${existingOwner} due to lockout.`, "warn");
+    }
+
+    lockedBlocks.add(blockId);
+    logEvent("LOCKOUT", `${blockId} removed from service by ${source}.`, "warn");
+  }
+
   function releaseVehicleReservation(vehicle) {
     if (!vehicle || !vehicle.reservedBlockId) return;
     if (blockReservations.get(vehicle.reservedBlockId) === vehicle.id) {
@@ -1143,8 +1159,7 @@
       lockedBlocks.delete(blockId);
       logEvent("LOCKOUT", `${blockId} returned to service.`, "good");
     } else {
-      lockedBlocks.add(blockId);
-      logEvent("LOCKOUT", `${blockId} removed from service by operator.`, "warn");
+      lockBlock(blockId);
     }
 
     updateBlockControl();
@@ -1159,7 +1174,7 @@
   });
 
   ui.scenarioJamBtn.addEventListener("click", () => {
-    lockedBlocks.add("B1");
+    lockBlock("B1", "downstream jam scenario");
     logEvent("SCENARIO", "B1 downstream station lockout applied.", "warn");
     updateUi();
   });

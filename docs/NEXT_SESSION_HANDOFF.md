@@ -2,84 +2,70 @@
 
 ## Canonical starting point
 
-Read this file and `docs/PROJECT_STATE.md` before changing the simulator.
+Read this file, `docs/PROJECT_STATE.md`, and `docs/CONTROL_SYSTEM.md` before changing the simulator.
 
 Repository: `badmrfrosty313/Dark-Ride-Simulator`
 
 ## Current milestone
 
-MVP-02 block control has been implemented.
+MVP-02.5 Operations Lab is implemented.
 
-Important commit:
+Key commits from this pass:
 
-`c4b11f1a79312f57152ccd8acf6def20dab4b4df`
+- `f7b76e0` operations-lab UI
+- `e96a629` operations-lab styling
+- `40052a5` guest flow, maintenance, scenarios, block lockouts, and safety diagnostics
 
-Index telemetry update:
+## Current behavior to smoke test
 
-`b9200bf2952cec98e8252532590e295e4fdb2634`
+After `git pull`, open `index.html`.
 
-## What changed
+Verify:
 
-The simulator now uses six operational blocks with reservation-based movement.
+1. original three vehicles run normally
+2. block reservations still work
+3. block holds still occur
+4. block board matches the route markers
+5. block lockout turns the block purple and prevents new reservation entry
+6. B1 lockout inhibits station dispatch
+7. B3 cascade drill arms, then faults the next vehicle entering B3
+8. upstream traffic cascades behind the B3 fault
+9. guest queue grows according to arrivals/min
+10. station loading reduces the guest queue
+11. onboard guest counts appear in vehicle telemetry
+12. throughput uses actual completed guests
+13. Route to Maintenance flags a vehicle
+14. flagged vehicle finishes its ride, then diverts to the service bay
+15. maintenance vehicle no longer occupies a mainline block
+16. Return to Service only enables when the station path is clear
+17. returned vehicle travels back to station and enters station dwell
+18. a manual fault produces an active alarm
+19. lockouts produce active alarms
+20. ride stop appears in alarms
+21. Guest Surge sets arrivals to 60/min and enables auto dispatch
+22. Clear Scenario removes lockouts, clears the armed scenario, recovers faulted vehicles, disables auto dispatch, and releases ride stop
+23. Reset Simulation restores the initial state
 
-Vehicles must reserve the next block before crossing a boundary. If the next block is occupied or already reserved, the vehicle slows and stops at a hold point.
+## Safety test
 
-A faulted vehicle keeps its current block occupied and releases any future block reservation.
+The simulator continuously asserts ride stop if it detects:
 
-Station dispatch is inhibited when:
+- double occupancy inside one exclusive mainline block
+- reservation ownership that conflicts with an existing occupant
 
-- B0 Station is occupied
-- B1 Gallery is occupied
-- B1 Gallery is reserved
-
-This creates an upstream traffic cascade instead of relying only on distance-based vehicle spacing.
-
-## Local smoke-test checklist
-
-After `git pull`, open `index.html` exactly as before.
-
-Confirm:
-
-1. the original three vehicles still move
-2. six block boundary markers appear on the route
-3. markers show green when clear
-4. markers show yellow when reserved
-5. markers show red when occupied
-6. selected vehicle telemetry shows current block
-7. selected vehicle telemetry shows its next-block reservation
-8. vehicles cross block boundaries only after reservation
-9. a vehicle approaching an unavailable block slows down
-10. it stops before the boundary in BLOCK HOLD
-11. injecting a fault causes the following car to hold upstream
-12. continued operation causes the queue to propagate through additional blocks
-13. dispatch becomes unavailable when the downstream station block is constrained
-14. recovering the faulted vehicle releases the chain in order
-15. ride stop / release still works
-16. completed laps still produce station dwell
-17. auto dispatch still operates when block capacity permits
-18. reset returns the simulator to the three-vehicle initial state
+These should never occur in normal operation. If a SAFETY event appears during ordinary operation, treat it as a control-system bug.
 
 ## Static validation already completed
 
-- JavaScript parses successfully
-- all 25 DOM IDs expected by the runtime exist
-- all six blocks are present
-- reservation controller is present
-- hold-point movement clamp is present
-- faults release future reservations
-- downstream dispatch interlock is present
+- JavaScript syntax: clean
+- runtime DOM bindings: 40
+- missing DOM IDs: 0
+- duplicate DOM IDs: 0
 
 ## Next engineering target
 
-If MVP-02 passes the browser smoke test, move toward MVP-03.
+Build a formal route graph.
 
-Recommended order:
+Do not bolt true branching paths onto the scalar-loop model. The next structural move should introduce nodes, directed edges, switches, merges, and edge/block reservations while preserving current behavior.
 
-1. add a compact block-status board to the operations UI
-2. add a deterministic test harness for block reservation / cascade behavior
-3. make block boundaries editable
-4. make waypoints draggable
-5. save and load layout JSON
-6. add switches and alternate paths
-
-Do not jump to 3D yet. The traffic-control brain is now valuable enough to protect.
+First branch to migrate onto the graph: the maintenance spur.

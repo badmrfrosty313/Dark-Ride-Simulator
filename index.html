@@ -75,11 +75,14 @@
             <div class="telemetry-row"><span>Zone</span><strong id="vehicleZone">—</strong></div>
             <div class="telemetry-row"><span>Block</span><strong id="vehicleBlock">—</strong></div>
             <div class="telemetry-row"><span>Reserved</span><strong id="vehicleReservation">—</strong></div>
+            <div class="telemetry-row"><span>Guests</span><strong id="vehicleOnboard">—</strong></div>
             <div class="telemetry-row"><span>Lap</span><strong id="vehicleLap">—</strong></div>
 
             <div class="button-grid vehicle-actions">
               <button id="faultBtn" class="danger">Inject Fault</button>
               <button id="recoverBtn">Recover Vehicle</button>
+              <button id="maintenanceBtn">Route to Maintenance</button>
+              <button id="returnServiceBtn">Return to Service</button>
             </div>
           </div>
         </section>
@@ -103,6 +106,64 @@
           </div>
         </section>
       </aside>
+    </section>
+
+    <section class="ops-grid">
+      <section class="panel ops-panel">
+        <div class="panel-heading compact">
+          <div>
+            <p class="eyebrow">TRAFFIC CONTROL</p>
+            <h2>Block Board</h2>
+          </div>
+        </div>
+        <div id="blockBoard" class="block-board"></div>
+        <div class="block-control-row">
+          <select id="blockSelect" aria-label="Select block">
+            <option value="B0">B0 // Station</option>
+            <option value="B1">B1 // Gallery</option>
+            <option value="B2">B2 // Machine Hall</option>
+            <option value="B3">B3 // The Void</option>
+            <option value="B4">B4 // Finale</option>
+            <option value="B5">B5 // Return</option>
+          </select>
+          <button id="toggleBlockLockBtn">Toggle Lockout</button>
+        </div>
+      </section>
+
+      <section class="panel ops-panel">
+        <div class="panel-heading compact">
+          <div>
+            <p class="eyebrow">LOAD CONTROL</p>
+            <h2>Guest Flow</h2>
+          </div>
+        </div>
+        <div class="guest-stats">
+          <div><span>Queue</span><strong id="queueMetric">0</strong></div>
+          <div><span>Loaded</span><strong id="loadedMetric">0</strong></div>
+        </div>
+        <label class="field-label" for="arrivalRateRange">
+          Guest arrivals
+          <span id="arrivalRateValue">24/min</span>
+        </label>
+        <input id="arrivalRateRange" type="range" min="0" max="60" value="24" step="2" />
+      </section>
+
+      <section class="panel ops-panel">
+        <div class="panel-heading compact">
+          <div>
+            <p class="eyebrow">SCENARIOS</p>
+            <h2>Operations Lab</h2>
+          </div>
+        </div>
+        <div class="scenario-grid">
+          <button id="scenarioCascadeBtn" class="danger">Arm B3 Cascade</button>
+          <button id="scenarioJamBtn">Jam Downstream</button>
+          <button id="scenarioSurgeBtn">Guest Surge</button>
+          <button id="clearScenarioBtn">Clear Scenario</button>
+        </div>
+        <div class="alarm-heading">ACTIVE ALARMS</div>
+        <div id="alarmList" class="alarm-list">No active alarms.</div>
+      </section>
     </section>
 
     <section class="panel event-panel">

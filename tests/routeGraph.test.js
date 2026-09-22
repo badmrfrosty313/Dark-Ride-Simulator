@@ -51,4 +51,17 @@ const serialized = graph.toJSON();
 const roundTrip = new api.RouteGraph(serialized);
 assert(roundTrip.node("N1").x === 365, "serialized graph round-trips edited geometry");
 
+const reservations = new api.ReservationTable();
+assert(reservations.reserve("B3", "RV-01"), "first reservation succeeds");
+assert(!reservations.reserve("B3", "RV-02"), "second vehicle cannot steal occupied reservation");
+assert(reservations.reserve("B3", "RV-01"), "reservation owner can idempotently retain resource");
+assert(!reservations.release("B3", "RV-02"), "non-owner cannot release reservation");
+assert(reservations.release("B3", "RV-01"), "owner can release reservation");
+assert(reservations.reserve("EM0", "RV-02"), "maintenance branch can be reserved");
+const revoked = reservations.lock("EM0");
+assert(revoked === "RV-02", "locking a resource returns and revokes prior owner");
+assert(!reservations.reserve("EM0", "RV-03"), "locked switch edge rejects reservation");
+reservations.unlock("EM0");
+assert(reservations.reserve("EM0", "RV-03"), "unlocked switch edge accepts reservation");
+
 console.log("\nRoute graph suite passed.");

@@ -436,3 +436,45 @@ select {
   .block-control-row { grid-template-columns: 1fr; }
   .scenario-grid { grid-template-columns: 1fr; }
 }
+
+
+.design-hint {
+  margin-top: 0.75rem;
+  color: #8fa6b1;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.show-board {
+  margin-top: 0.45rem;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.show-cue {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  border: 1px solid #1d2d35;
+  border-radius: 9px;
+  padding: 0.52rem 0.62rem;
+  font-size: 0.7rem;
+  background: #071015;
+}
+
+.show-cue strong {
+  font-size: 0.68rem;
+}
+
+.show-cue.active { border-color: #765f30; }
+.show-cue.reset { border-color: #405b7d; }
+
+.canvas-wrap.design-active {
+  outline: 2px solid #765f30;
+  outline-offset: -2px;
+}
+
+.canvas-wrap.design-active canvas {
+  cursor: grab;
+}

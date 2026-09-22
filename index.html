@@ -48,6 +48,8 @@
             <button id="dispatchBtn" class="primary">Dispatch Vehicle</button>
             <button id="autoDispatchBtn">Auto Dispatch: OFF</button>
             <button id="rideStopBtn" class="danger">Ride Stop</button>
+            <button id="evacuateBtn" class="danger">Evacuate Ride</button>
+            <button id="recoveryCheckBtn">Recovery Check</button>
             <button id="resetBtn">Reset Simulation</button>
           </div>
 
@@ -163,6 +165,25 @@
         </div>
         <div class="alarm-heading">ACTIVE ALARMS</div>
         <div id="alarmList" class="alarm-list">No active alarms.</div>
+      </section>
+
+      <section class="panel ops-panel">
+        <div class="panel-heading compact">
+          <div>
+            <p class="eyebrow">DESIGN + SHOW</p>
+            <h2>Ride Engineering</h2>
+          </div>
+        </div>
+        <div class="scenario-grid">
+          <button id="designModeBtn">Design Mode: OFF</button>
+          <button id="exportLayoutBtn">Export Layout</button>
+          <button id="importLayoutBtn">Import Layout</button>
+          <button id="resetLayoutBtn">Reset Layout</button>
+        </div>
+        <input id="layoutFileInput" class="hidden" type="file" accept="application/json,.json" />
+        <p id="designHint" class="design-hint">Design mode off. Vehicles own the floor.</p>
+        <div class="alarm-heading">SHOW CONTROL</div>
+        <div id="showBoard" class="show-board">All scenes idle.</div>
       </section>
     </section>
 

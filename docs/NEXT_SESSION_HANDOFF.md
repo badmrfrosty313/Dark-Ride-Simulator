@@ -110,3 +110,16 @@ If that succeeds, complete the two remaining Todoist items:
 
 - Smoke-test the Operations Lab build
 - See credits: complete full operations scenario
+
+
+## V1 COMPLETE
+
+Final acceptance passed on 2026-09-22.
+
+The browser smoke test and **Run Full Drill** both passed.
+
+Canonical status:
+
+**V1 COMPLETE / CREDITS REACHED**
+
+Do not treat additional features as blockers for V1. Future work is V2 scope.

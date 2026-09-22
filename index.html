@@ -181,6 +181,11 @@
           <button id="resetLayoutBtn">Reset Layout</button>
         </div>
         <input id="layoutFileInput" class="hidden" type="file" accept="application/json,.json" />
+        <label class="field-label" for="blockBoundaryRange">
+          Selected block end
+          <span id="blockBoundaryValue">—</span>
+        </label>
+        <input id="blockBoundaryRange" type="range" min="5" max="95" value="15" step="1" />
         <p id="designHint" class="design-hint">Design mode off. Vehicles own the floor.</p>
         <div class="alarm-heading">SHOW CONTROL</div>
         <div id="showBoard" class="show-board">All scenes idle.</div>

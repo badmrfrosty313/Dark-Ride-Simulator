@@ -2,77 +2,103 @@
 
 ## Current milestone
 
-**MVP-02: Block-controlled ride operations**
+**MVP-02.5: Operations Lab**
 
-Status: implemented in browser simulator; local smoke test required after pull.
+Status: implemented and statically validated; browser smoke test required after pull.
 
-## Implemented
+## Implemented systems
 
-### MVP-01 foundation
+### Vehicle and route model
 
-- zero-build browser application
-- responsive operations dashboard
-- Canvas-based top-down ride floor
 - closed waypoint route
-- three seeded ride vehicles
+- per-vehicle scalar route position
 - acceleration / deceleration
 - configurable ride speed
-- manual and automatic dispatch
-- station dwell after a completed circuit
-- named show zones and entry triggers
-- vehicle selection and telemetry
-- injected vehicle faults and recovery
-- global ride stop / release
-- live event log
-- active fleet, completed-cycle, throughput, and fault metrics
+- selected-vehicle telemetry
+- six-seat guest capacity
+- maintenance request and maintenance lifecycle
 
-### MVP-02 traffic control
+### Traffic control
 
-- six explicit operational blocks:
-  - B0 Station
-  - B1 Gallery
-  - B2 Machine Hall
-  - B3 The Void
-  - B4 Finale
-  - B5 Return
-- one-block-ahead reservation requests
-- explicit block ownership / occupancy
+- B0 Station
+- B1 Gallery
+- B2 Machine Hall
+- B3 The Void
+- B4 Finale
+- B5 Return
+- exclusive block occupancy
+- one-block-ahead reservations
 - reservation arbitration
-- hold points before each block boundary
-- automatic deceleration approaching an unavailable block
-- BLOCK APPROACH and BLOCK HOLD states
-- reservation release when a vehicle enters the reserved block
-- reservation release when a vehicle faults
-- visible block boundary status:
-  - green = clear
-  - yellow = reserved
-  - red = occupied
-- selected-vehicle block and reservation telemetry
-- downstream dispatch interlock
-- cascading upstream holds after a stopped or faulted vehicle
-- proximity spacing retained as a secondary collision guard
+- hold points
+- BLOCK APPROACH and BLOCK HOLD behavior
+- cascading upstream holds
+- station/downstream dispatch interlocks
+- operator block lockouts
+- proximity spacing as secondary collision protection
 
-## Current traffic-control behavior
+### Guest operations
 
-A ride vehicle may not cross into its next block unless it owns that block's reservation.
+- continuously arriving guest queue
+- configurable arrivals per minute
+- loading at dispatch / station dwell completion
+- onboard guest telemetry
+- actual guest completions
+- actual projected guests/hour based on simulation runtime
+- guest-surge scenario
 
-When a vehicle approaches the end of its current block:
+### Maintenance operations
 
-1. it requests the next block
-2. if the next block is clear and unreserved, the reservation is granted
-3. if the next block is unavailable, the vehicle decelerates
-4. the vehicle stops at the block hold point before the boundary
-5. once the downstream block clears, the waiting vehicle receives the reservation and proceeds
+- Route to Maintenance request on selected vehicle
+- diversion after next completed ride cycle
+- visible maintenance spur
+- service bay
+- TO MAINTENANCE
+- MAINTENANCE
+- RETURN TO SERVICE
+- safe station-path check before return to service
+- maintenance vehicles removed from mainline block occupancy
 
-A faulted vehicle remains an occupant of its current block and releases any future reservation it held.
+### Faults and scenarios
 
-This creates the desired cascade:
+- manual fault injection
+- manual recovery
+- B3 cascade drill that faults the next vehicle entering B3
+- B1 downstream station-jam scenario
+- guest-surge scenario
+- clear-scenario recovery control
 
-- faulted vehicle blocks its current block
-- following vehicle holds one block upstream
-- the next following vehicle eventually holds another block upstream
-- B1 occupancy or reservation inhibits new station dispatches
-- recovery releases the chain in order as blocks become available
+### Safety diagnostics
+
+The runtime now checks safety invariants continuously.
+
+Current asserted violations:
+
+- more than one mainline vehicle occupying an exclusive block
+- a block reservation owned by one vehicle while a different vehicle occupies that block
+
+A newly detected safety violation:
+
+1. latches a safety alarm
+2. writes a SAFETY event
+3. asserts ride stop
+
+### Operator UI
+
+- live floor
+- block boundary state
+- block board
+- selected vehicle telemetry
+- guest-flow panel
+- scenario panel
+- active alarms
+- event log
+
+## Block colors
+
+- green: clear
+- yellow: reserved
+- red: occupied
+- purple: operator lockout
 
 ## Current vehicle states
 
@@ -82,61 +108,71 @@ This creates the desired cascade:
 - BLOCK HOLD
 - STATION DWELL
 - FAULT
+- TO MAINTENANCE
+- MAINTENANCE
+- RETURN TO SERVICE
 
-Global ride stop inhibits motion without destroying the underlying vehicle state.
+## Static validation
 
-## Architecture
+Latest static pass confirmed:
 
-The project intentionally remains zero-build for now so `index.html` can still be opened directly.
+- JavaScript parses successfully
+- 40 runtime DOM bindings exist
+- zero missing DOM IDs
+- zero duplicate DOM IDs
+- maintenance system present
+- guest-flow system present
+- lockout controller present
+- deterministic scenario hook present
+- safety diagnostics present
 
-MVP-02 separates the traffic-control concepts logically inside `src/app.js` without yet introducing browser ES modules.
+## Architecture direction
 
-Primary logical components now are:
+The browser remains zero-build.
 
-1. route / distance model
-2. block model
-3. reservation controller
-4. station dispatch interlock
-5. vehicle motion controller
-6. show-zone event layer
-7. Canvas renderer
-8. UI controls
+Logical subsystems inside `src/app.js` are now mature enough to extract later:
 
-Physical file separation can happen later with a local server or bundling step once the behavioral model stabilizes.
+1. route model
+2. block / reservation controller
+3. vehicle controller
+4. guest-flow controller
+5. maintenance controller
+6. scenario controller
+7. safety diagnostics
+8. show trigger layer
+9. renderer
+10. operator UI
+
+Do not physically modularize merely for aesthetics. Extract when route editing / branching requires it.
 
 ## Known limitations
 
-- path is fixed in source
-- block boundaries are defined as route-distance ratios
-- all vehicles follow one loop
-- no switches or alternate routes yet
-- station loading remains timer-based
-- no guest queue model
+- the main route is still one fixed loop
+- block geometry is route-distance based
+- maintenance is modeled as a controlled service spur, not yet a full graph branch
+- no editable waypoints
+- no true switch nodes
+- no alternate ride paths
 - no evacuation workflow
-- no maintenance bay
-- no save/load
-- no scene animation beyond trigger zones
-- no show audio / lighting synchronization
-- no automated unit tests yet
+- no synchronized show cue timing/reset system
+- no persistence
+- automated browser tests are not yet wired to CI
 
 ## Next milestone
 
-### MVP-03: Editable ride layout
+### MVP-03: Route Graph + Editor
 
-Target capabilities:
+Recommended order:
 
-- draggable waypoints
-- route editing
-- editable show zones
-- editable block boundaries
-- switch nodes
-- alternate paths
-- save/load ride layout JSON
-
-Before the full editor, consider adding a compact block-status panel and a deterministic traffic-control test harness.
+1. create formal node/edge route graph
+2. preserve existing block safety logic on graph edges
+3. convert maintenance spur into a real branch
+4. add switch / merge reservations
+5. make waypoints draggable
+6. make block boundaries editable
+7. save/load layout JSON
+8. add scene cue timelines tied to graph zones
 
 ## Design rule
 
 **Simulation first, spectacle second.**
-
-Rendering visualizes the ride-control model. It must not dictate it.

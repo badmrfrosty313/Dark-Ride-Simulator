@@ -1,0 +1,47 @@
+const fs = require("fs");
+const path = require("path");
+const vm = require("vm");
+
+const root = path.resolve(__dirname, "..");
+const source = fs.readFileSync(path.join(root, "src", "routeGraph.js"), "utf8");
+
+const sandbox = { window: {} };
+vm.createContext(sandbox);
+vm.runInContext(source, sandbox);
+
+const api = sandbox.window.DarkRideRouteGraph;
+if (!api) throw new Error("DarkRideRouteGraph API was not exposed.");
+
+const graph = new api.RouteGraph(api.defaultLayout());
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+  console.log("PASS:", message);
+}
+
+assert(graph.mainline.length === 13, "default graph contains 13 mainline nodes");
+
+const route = graph.mainlineCoordinates();
+assert(route.length === 14, "mainline coordinate path closes the loop");
+assert(route[0].id === route[route.length - 1].id, "mainline loop returns to station node");
+
+const mainlineEdges = graph.mainlineEdges();
+assert(mainlineEdges.length === 13, "default graph contains 13 directed mainline edges");
+
+const maintenance = graph.maintenanceEdge();
+assert(Boolean(maintenance), "maintenance branch edge exists");
+assert(maintenance.id === "EM0", "maintenance branch uses EM0");
+assert(maintenance.bidirectional === true, "maintenance branch supports controlled return");
+
+const outgoingStation = graph.outgoing("N0").map((edge) => edge.id);
+assert(outgoingStation.includes("E0"), "station has mainline outgoing edge");
+assert(outgoingStation.includes("EM0"), "station has maintenance branch edge");
+
+assert(graph.setNodePosition("N1", 365, 615), "waypoint position can be edited");
+assert(graph.node("N1").x === 365 && graph.node("N1").y === 615, "edited waypoint persists in graph");
+
+const serialized = graph.toJSON();
+const roundTrip = new api.RouteGraph(serialized);
+assert(roundTrip.node("N1").x === 365, "serialized graph round-trips edited geometry");
+
+console.log("\nRoute graph suite passed.");

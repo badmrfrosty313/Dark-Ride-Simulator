@@ -6,75 +6,80 @@ Read this file and `docs/PROJECT_STATE.md` before changing the simulator.
 
 Repository: `badmrfrosty313/Dark-Ride-Simulator`
 
-## Current objective
+## Current milestone
 
-Complete a local smoke test of MVP-01, fix any runtime issues, then begin MVP-02 by extracting the simulation model away from the renderer.
+MVP-02 block control has been implemented.
 
-## What exists now
+Important commit:
 
-The repository contains a dependency-free browser simulator:
+`c4b11f1a79312f57152ccd8acf6def20dab4b4df`
 
-- `index.html`
-- `styles.css`
-- `src/app.js`
-- `README.md`
-- `docs/PROJECT_STATE.md`
+Index telemetry update:
 
-Open `index.html` directly or through VS Code Live Server.
+`b9200bf2952cec98e8252532590e295e4fdb2634`
 
-## Smoke-test checklist
+## What changed
 
-Confirm all of the following:
+The simulator now uses six operational blocks with reservation-based movement.
 
-1. three vehicles appear and move
-2. vehicles follow the complete route
-3. clicking a vehicle selects it
-4. selected telemetry updates
-5. ride-speed slider changes vehicle speed
-6. vehicles slow / stop when spacing compresses
-7. manual dispatch is blocked while the station is occupied
-8. manual dispatch becomes available after clearance
-9. auto dispatch adds vehicles over time
-10. vehicles dwell after completing a lap
-11. show-zone trigger entries appear in the log
-12. injecting a fault stops one vehicle
-13. following vehicles queue behind the fault
-14. recovering the vehicle restores movement
-15. ride stop freezes the fleet
-16. releasing ride stop restores movement
-17. reset returns to the initial three-vehicle state
+Vehicles must reserve the next block before crossing a boundary. If the next block is occupied or already reserved, the vehicle slows and stops at a hold point.
 
-## Next engineering move
+A faulted vehicle keeps its current block occupied and releases any future block reservation.
 
-Do **not** jump to 3D yet.
+Station dispatch is inhibited when:
 
-Refactor `src/app.js` into modules while preserving behavior:
+- B0 Station is occupied
+- B1 Gallery is occupied
+- B1 Gallery is reserved
 
-```
-src/
-  main.js
-  sim/
-    Simulation.js
-    Route.js
-    Vehicle.js
-    TrafficController.js
-    StationController.js
-    EventBus.js
-  ui/
-    Renderer.js
-    Controls.js
-```
+This creates an upstream traffic cascade instead of relying only on distance-based vehicle spacing.
 
-Then replace the single closed-path traffic rule with explicit route segments / blocks and reservations.
+## Local smoke-test checklist
 
-## First real systems target
+After `git pull`, open `index.html` exactly as before.
 
-A stopped vehicle should cause a believable cascade:
+Confirm:
 
-- occupied block becomes unavailable
-- following vehicle stops at its safe hold point
-- vehicles behind it stop progressively
-- dispatch becomes inhibited if downstream capacity is unavailable
-- recovery releases the chain in order
+1. the original three vehicles still move
+2. six block boundary markers appear on the route
+3. markers show green when clear
+4. markers show yellow when reserved
+5. markers show red when occupied
+6. selected vehicle telemetry shows current block
+7. selected vehicle telemetry shows its next-block reservation
+8. vehicles cross block boundaries only after reservation
+9. a vehicle approaching an unavailable block slows down
+10. it stops before the boundary in BLOCK HOLD
+11. injecting a fault causes the following car to hold upstream
+12. continued operation causes the queue to propagate through additional blocks
+13. dispatch becomes unavailable when the downstream station block is constrained
+14. recovering the faulted vehicle releases the chain in order
+15. ride stop / release still works
+16. completed laps still produce station dwell
+17. auto dispatch still operates when block capacity permits
+18. reset returns the simulator to the three-vehicle initial state
 
-That behavior will be the foundation for faults, evacuations, and realistic capacity simulation.
+## Static validation already completed
+
+- JavaScript parses successfully
+- all 25 DOM IDs expected by the runtime exist
+- all six blocks are present
+- reservation controller is present
+- hold-point movement clamp is present
+- faults release future reservations
+- downstream dispatch interlock is present
+
+## Next engineering target
+
+If MVP-02 passes the browser smoke test, move toward MVP-03.
+
+Recommended order:
+
+1. add a compact block-status board to the operations UI
+2. add a deterministic test harness for block reservation / cascade behavior
+3. make block boundaries editable
+4. make waypoints draggable
+5. save and load layout JSON
+6. add switches and alternate paths
+
+Do not jump to 3D yet. The traffic-control brain is now valuable enough to protect.

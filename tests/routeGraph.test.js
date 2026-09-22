@@ -37,6 +37,13 @@ const outgoingStation = graph.outgoing("N0").map((edge) => edge.id);
 assert(outgoingStation.includes("E0"), "station has mainline outgoing edge");
 assert(outgoingStation.includes("EM0"), "station has maintenance branch edge");
 
+assert(graph.controlBlocks.length === 6, "control graph contains six exclusive blocks");
+assert(graph.nextControlBlock("B0").id === "B1", "control topology advances B0 to B1");
+assert(graph.nextControlBlock("B5").id === "B0", "control topology closes B5 back to B0");
+assert(graph.setControlBoundary("B2", 0.52), "control boundary can be edited through graph API");
+assert(graph.controlBlock("B2").endRatio === 0.52, "edited B2 boundary persists");
+assert(graph.controlBlock("B3").startRatio === 0.52, "adjacent B3 boundary moves with B2");
+
 assert(graph.setNodePosition("N1", 365, 615), "waypoint position can be edited");
 assert(graph.node("N1").x === 365 && graph.node("N1").y === 615, "edited waypoint persists in graph");
 

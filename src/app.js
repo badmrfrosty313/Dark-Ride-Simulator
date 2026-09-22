@@ -275,6 +275,11 @@
       return;
     }
 
+    if (fullDrill.timer > 180) {
+      failFullDrill(`Full drill timed out in phase ${fullDrill.phase}.`);
+      return;
+    }
+
     if (fullDrill.phase === "ARM_FAULT") {
       const target = vehicles.find((vehicle) => vehicle.faulted);
       if (target) {
@@ -357,9 +362,6 @@
       }
     }
 
-    if (fullDrill.timer > 180) {
-      failFullDrill(`Full drill timed out in phase ${fullDrill.phase}.`);
-    }
   }
 
   function nowLabel() {

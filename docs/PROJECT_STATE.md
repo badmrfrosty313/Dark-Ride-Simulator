@@ -4,7 +4,7 @@
 
 **MVP-03: Graph-Controlled Operations Lab**
 
-Status: core implementation complete and statically validated. Only final browser smoke test / credits drill acceptance remains.
+Status: **V1 COMPLETE.** Static tests, browser smoke test, and the full operations drill all passed.
 
 ## Implemented systems
 
@@ -210,3 +210,21 @@ Current acceptance gate:
 5. verify drill reaches PASS with no SAFETY event
 
 If those pass, the current V1 has reached credits.
+
+
+## V1 acceptance
+
+V1 acceptance completed successfully on 2026-09-22.
+
+Passed:
+
+- static contract suite
+- RouteGraph regression suite
+- browser smoke test
+- full autonomous operations drill
+- fault → cascade → recovery → maintenance → return-to-service scenario
+- no safety-control violation during the acceptance run
+
+**V1 has reached credits.**
+
+Further work should be treated as V2 / DLC, not as unfinished V1 scope.

@@ -78,6 +78,26 @@
       return this.nodes.get(id) || null;
     }
 
+    edge(id) {
+      return this.edges.find((edge) => edge.id === id) || null;
+    }
+
+    outgoing(nodeId) {
+      return this.edges.filter((edge) => edge.from === nodeId || (edge.bidirectional && edge.to === nodeId));
+    }
+
+    incoming(nodeId) {
+      return this.edges.filter((edge) => edge.to === nodeId || (edge.bidirectional && edge.from === nodeId));
+    }
+
+    mainlineEdges() {
+      return this.edges.filter((edge) => edge.kind === "mainline");
+    }
+
+    maintenanceEdge() {
+      return this.edge(this.maintenance.edgeId);
+    }
+
     setNodePosition(id, x, y) {
       const node = this.node(id);
       if (!node) return false;

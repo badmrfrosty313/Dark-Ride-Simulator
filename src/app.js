@@ -42,6 +42,8 @@
     scenarioCascadeBtn: document.getElementById("scenarioCascadeBtn"),
     scenarioJamBtn: document.getElementById("scenarioJamBtn"),
     scenarioSurgeBtn: document.getElementById("scenarioSurgeBtn"),
+    fullDrillBtn: document.getElementById("fullDrillBtn"),
+    drillStatus: document.getElementById("drillStatus"),
     clearScenarioBtn: document.getElementById("clearScenarioBtn"),
     alarmList: document.getElementById("alarmList"),
     evacuateBtn: document.getElementById("evacuateBtn"),
@@ -147,6 +149,14 @@
   let guestArrivalCarry = 0;
   let pendingScenario = null;
   let maintenanceBranchOwner = null;
+  let fullDrill = {
+    active: false,
+    phase: "IDLE",
+    targetVehicleId: null,
+    timer: 0,
+    cascadeObserved: false,
+    result: null,
+  };
 
   const showTimelines = [
     { zone: "Scene 1 // The Gallery", duration: 5.5 },
@@ -210,6 +220,145 @@
         state.phase = "IDLE";
         state.vehicleId = null;
       }
+    }
+  }
+
+  function setFullDrillPhase(phase, message) {
+    fullDrill.phase = phase;
+    fullDrill.timer = 0;
+    if (message) logEvent("DRILL", message, phase === "FAILED" ? "error" : "good");
+  }
+
+  function failFullDrill(message) {
+    fullDrill.active = false;
+    fullDrill.result = "FAIL";
+    setFullDrillPhase("FAILED", message);
+    autoDispatch = false;
+  }
+
+  function startFullDrill() {
+    pendingScenario = null;
+    reservationTable.clear();
+    blockHoldLog.clear();
+    safetyLatch.clear();
+    safetyViolationFrames.clear();
+    evacuationMode = false;
+    rideStopped = false;
+    rideStopSource = "NONE";
+    autoDispatch = true;
+
+    for (const vehicle of vehicles) {
+      if (vehicle.faulted) recoverVehicle(vehicle);
+      vehicle.maintenanceRequested = false;
+    }
+
+    fullDrill = {
+      active: true,
+      phase: "ARM_FAULT",
+      targetVehicleId: null,
+      timer: 0,
+      cascadeObserved: false,
+      result: null,
+    };
+
+    pendingScenario = { type: "FAULT_ON_BLOCK", blockId: "B3" };
+    logEvent("DRILL", "Full operations drill started. Waiting for next B3 entry.", "good");
+  }
+
+  function updateFullDrill(dt) {
+    if (!fullDrill.active) return;
+
+    fullDrill.timer += dt;
+
+    if (safetyLatch.size > 0 || rideStopSource === "SAFETY") {
+      failFullDrill("Full drill failed: safety system asserted a stop.");
+      return;
+    }
+
+    if (fullDrill.phase === "ARM_FAULT") {
+      const target = vehicles.find((vehicle) => vehicle.faulted);
+      if (target) {
+        fullDrill.targetVehicleId = target.id;
+        setFullDrillPhase("WAIT_CASCADE", `${target.id} faulted in B3. Waiting for upstream cascade.`);
+      }
+      return;
+    }
+
+    if (fullDrill.phase === "WAIT_CASCADE") {
+      const target = vehicles.find((vehicle) => vehicle.id === fullDrill.targetVehicleId);
+      if (!target) {
+        failFullDrill("Full drill failed: target vehicle disappeared.");
+        return;
+      }
+
+      fullDrill.cascadeObserved = fullDrill.cascadeObserved || vehicles.some(
+        (vehicle) =>
+          vehicle.id !== target.id &&
+          (vehicle.state === "BLOCK HOLD" || vehicle.state === "BLOCK APPROACH" || vehicle.state === "SPACING HOLD")
+      );
+
+      if (fullDrill.cascadeObserved && fullDrill.timer >= 2) {
+        recoverVehicle(target);
+        setFullDrillPhase("WAIT_RECOVERY", `${target.id} recovered. Waiting for traffic to normalize.`);
+      }
+      return;
+    }
+
+    if (fullDrill.phase === "WAIT_RECOVERY") {
+      const target = vehicles.find((vehicle) => vehicle.id === fullDrill.targetVehicleId);
+      const faulted = vehicles.some((vehicle) => vehicle.faulted);
+      const held = vehicles.some((vehicle) => vehicle.state === "BLOCK HOLD");
+
+      if (!faulted && !held && fullDrill.timer >= 2 && target) {
+        target.maintenanceRequested = true;
+        setFullDrillPhase("WAIT_MAINTENANCE", `${target.id} queued for maintenance diversion.`);
+      }
+      return;
+    }
+
+    if (fullDrill.phase === "WAIT_MAINTENANCE") {
+      const target = vehicles.find((vehicle) => vehicle.id === fullDrill.targetVehicleId);
+      if (!target) {
+        failFullDrill("Full drill failed during maintenance routing.");
+        return;
+      }
+
+      if (target.maintenanceState === "IN_BAY") {
+        setFullDrillPhase("WAIT_RETURN", `${target.id} reached maintenance bay. Waiting for safe return window.`);
+      }
+      return;
+    }
+
+    if (fullDrill.phase === "WAIT_RETURN") {
+      const target = vehicles.find((vehicle) => vehicle.id === fullDrill.targetVehicleId);
+      if (!target) {
+        failFullDrill("Full drill failed before return to service.");
+        return;
+      }
+
+      if (target.maintenanceState === "IN_BAY" && stationClear() && !maintenanceBranchOwner) {
+        if (reserveMaintenanceBranch(target)) {
+          target.maintenanceState = "RETURNING";
+          target.state = "RETURN TO SERVICE";
+          logEvent("DRILL", `${target.id} automatically released from maintenance bay.`, "good");
+        }
+      }
+
+      if (target.maintenanceState === "NONE" && target.dwellRemaining > 0) {
+        fullDrill.active = false;
+        fullDrill.result = "PASS";
+        fullDrill.phase = "COMPLETE";
+        autoDispatch = false;
+        logEvent(
+          "DRILL",
+          `PASS: fault → cascade → recovery → maintenance → return completed with no safety violation.`,
+          "good"
+        );
+      }
+    }
+
+    if (fullDrill.timer > 180) {
+      failFullDrill(`Full drill timed out in phase ${fullDrill.phase}.`);
     }
   }
 
@@ -786,6 +935,7 @@
     }
 
     runSafetyDiagnostics();
+    updateFullDrill(dt);
 
     if (autoDispatch && !rideStopped) {
       autoDispatchClock += dt;
@@ -1214,6 +1364,14 @@
     renderBlockBoard();
     renderAlarms();
     renderShowBoard();
+    ui.fullDrillBtn.disabled = fullDrill.active;
+    ui.drillStatus.textContent = fullDrill.active
+      ? `Full drill: ${fullDrill.phase.replaceAll("_", " ")} // ${fullDrill.timer.toFixed(1)}s`
+      : fullDrill.result === "PASS"
+        ? "Full drill PASS. Control system survived the complete scenario."
+        : fullDrill.result === "FAIL"
+          ? `Full drill FAIL at ${fullDrill.phase}.`
+          : "Full drill idle.";
     ui.designModeBtn.textContent = `Design Mode: ${designMode ? "ON" : "OFF"}`;
     ui.designHint.textContent = designMode
       ? "Drag gold route nodes. Design mode holds the ride stopped."
@@ -1295,6 +1453,14 @@
     guestArrivalCarry = 0;
     pendingScenario = null;
     maintenanceBranchOwner = null;
+    fullDrill = {
+      active: false,
+      phase: "IDLE",
+      targetVehicleId: null,
+      timer: 0,
+      cascadeObserved: false,
+      result: null,
+    };
     reservationTable.clear();
     blockHoldLog.clear();
     safetyLatch.clear();
@@ -1416,8 +1582,19 @@
     updateUi();
   });
 
+  ui.fullDrillBtn.addEventListener("click", () => {
+    startFullDrill();
+    updateUi();
+  });
+
   ui.clearScenarioBtn.addEventListener("click", () => {
     pendingScenario = null;
+    fullDrill.active = false;
+    fullDrill.phase = "IDLE";
+    fullDrill.result = null;
+    fullDrill.targetVehicleId = null;
+    fullDrill.timer = 0;
+    fullDrill.cascadeObserved = false;
     reservationTable.clear();
     autoDispatch = false;
     rideStopped = false;

@@ -151,6 +151,7 @@
   let guestCompletions = 0;
   let guestArrivalCarry = 0;
   let pendingScenario = null;
+  let maintenanceBranchOwner = null;
 
   const showTimelines = [
     { zone: "Scene 1 // The Gallery", duration: 5.5 },
@@ -307,6 +308,55 @@
     };
   }
 
+  function maintenanceBayOccupied(exceptVehicleId = null) {
+    return vehicles.some(
+      (vehicle) =>
+        vehicle.id !== exceptVehicleId &&
+        (vehicle.maintenanceState === "TO_BAY" ||
+          vehicle.maintenanceState === "IN_BAY" ||
+          vehicle.maintenanceState === "RETURNING")
+    );
+  }
+
+  function reserveMaintenanceBranch(vehicle) {
+    if (!vehicle) return false;
+    if (maintenanceBranchOwner && maintenanceBranchOwner !== vehicle.id) return false;
+
+    maintenanceBranchOwner = vehicle.id;
+    logEvent(
+      "RESERVE",
+      `${vehicle.id} reserved ${routeGraph.maintenance.edgeId} maintenance branch.`,
+      "good"
+    );
+    return true;
+  }
+
+  function releaseMaintenanceBranch(vehicle) {
+    if (vehicle && maintenanceBranchOwner === vehicle.id) {
+      maintenanceBranchOwner = null;
+      logEvent(
+        "RELEASE",
+        `${vehicle.id} released ${routeGraph.maintenance.edgeId} maintenance branch.`,
+        "good"
+      );
+    }
+  }
+
+  function tryBeginMaintenanceDiversion(vehicle) {
+    if (!vehicle || !vehicle.maintenanceRequested) return false;
+    if (maintenanceBayOccupied(vehicle.id)) return false;
+    if (!reserveMaintenanceBranch(vehicle)) return false;
+
+    vehicle.maintenanceRequested = false;
+    vehicle.maintenanceState = "TO_BAY";
+    vehicle.maintenanceProgress = 0;
+    vehicle.state = "TO MAINTENANCE";
+    releaseVehicleReservation(vehicle);
+    blockHoldLog.delete(vehicle.id);
+    logEvent("SERVICE", `${vehicle.id} diverted through graph switch N0 to maintenance edge ${routeGraph.maintenance.edgeId}.`, "warn");
+    return true;
+  }
+
   function updateMaintenanceVehicle(vehicle, dt) {
     vehicle.speed = 0;
     vehicle.zoneName = "Maintenance Bay";
@@ -322,6 +372,7 @@
       if (vehicle.maintenanceProgress >= 1) {
         vehicle.maintenanceState = "IN_BAY";
         vehicle.state = "MAINTENANCE";
+        releaseMaintenanceBranch(vehicle);
         logEvent("SERVICE", `${vehicle.id} secured in maintenance bay.`, "warn");
       }
       return;
@@ -340,12 +391,13 @@
       );
 
       if (vehicle.maintenanceProgress <= 0) {
+        releaseMaintenanceBranch(vehicle);
         vehicle.maintenanceState = "NONE";
         vehicle.distance = 0;
         vehicle.dwellRemaining = CONFIG.stationDwellSeconds;
         vehicle.state = "STATION DWELL";
         vehicle.zoneName = "Load / Unload";
-        logEvent("SERVICE", `${vehicle.id} returned to the station for loading.`, "good");
+        logEvent("SERVICE", `${vehicle.id} merged from maintenance edge into N0 station for loading.`, "good");
       }
     }
   }
@@ -569,6 +621,21 @@
       return;
     }
 
+    if (
+      vehicle.maintenanceRequested &&
+      blockAtDistance(vehicle.distance).id === "B0" &&
+      vehicle.distance < 8
+    ) {
+      vehicle.speed = 0;
+
+      if (tryBeginMaintenanceDiversion(vehicle)) {
+        return;
+      }
+
+      vehicle.state = "MAINTENANCE HOLD";
+      return;
+    }
+
     if (vehicle.dwellRemaining > 0) {
       vehicle.dwellRemaining = Math.max(0, vehicle.dwellRemaining - dt);
       vehicle.speed = 0;
@@ -659,13 +726,9 @@
       vehicle.speed = 0;
 
       if (vehicle.maintenanceRequested) {
-        vehicle.maintenanceRequested = false;
-        vehicle.maintenanceState = "TO_BAY";
-        vehicle.maintenanceProgress = 0;
-        vehicle.state = "TO MAINTENANCE";
-        releaseVehicleReservation(vehicle);
-        blockHoldLog.delete(vehicle.id);
-        logEvent("SERVICE", `${vehicle.id} diverted from station to maintenance bay.`, "warn");
+        vehicle.state = "MAINTENANCE HOLD";
+        if (tryBeginMaintenanceDiversion(vehicle)) return;
+        logEvent("HOLD", `${vehicle.id} waiting at station for maintenance branch/bay clearance.`, "warn");
         return;
       }
 
@@ -1070,6 +1133,9 @@
     }
 
     if (pendingScenario) alarms.push({ text: "B3 CASCADE DRILL ARMED", warn: true });
+    if (maintenanceBranchOwner) {
+      alarms.push({ text: `${routeGraph.maintenance.edgeId} RESERVED // ${maintenanceBranchOwner}`, warn: true });
+    }
     for (const key of safetyLatch) alarms.push({ text: `SAFETY ${key}`, warn: false });
     if (evacuationMode) alarms.push({ text: `EVACUATION ACTIVE // ${evacuatedGuests} guests evacuated`, warn: false });
     if (rideStopped) alarms.push({ text: `${rideStopSource} RIDE STOP ACTIVE`, warn: false });
@@ -1234,6 +1300,7 @@
     guestCompletions = 0;
     guestArrivalCarry = 0;
     pendingScenario = null;
+    maintenanceBranchOwner = null;
     blockReservations.clear();
     blockHoldLog.clear();
     lockedBlocks.clear();
@@ -1311,9 +1378,14 @@
       return;
     }
 
+    if (!reserveMaintenanceBranch(vehicle)) {
+      logEvent("DENIED", `${vehicle.id} return blocked; maintenance branch is reserved.`, "warn");
+      return;
+    }
+
     vehicle.maintenanceState = "RETURNING";
     vehicle.state = "RETURN TO SERVICE";
-    logEvent("SERVICE", `${vehicle.id} released from maintenance bay.`, "good");
+    logEvent("SERVICE", `${vehicle.id} released from maintenance bay onto graph edge ${routeGraph.maintenance.edgeId}.`, "good");
     updateUi();
   });
 

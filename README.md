@@ -12,7 +12,11 @@ The first playable build includes:
 - waypoint-based trackless vehicle routing
 - load/unload station
 - manual and automatic dispatch
-- minimum vehicle spacing
+- explicit operational blocks and hold points
+- one-block-ahead reservations
+- cascading block holds after faults
+- downstream dispatch interlocks
+- minimum vehicle spacing as a secondary collision guard
 - show-zone entry triggers
 - station dwell timing
 - vehicle selection and telemetry
@@ -57,8 +61,8 @@ The simulation intentionally starts dependency-free so the ride-control model ca
 
 1. Operational MVP
 2. Editable routes and zones
-3. Switches / branching path logic
-4. Block-zone and reservation-based traffic control
+3. Editable block boundaries and route waypoints
+4. Switches / branching path logic
 5. Scene timing and synchronized show control
 6. Multiple stations and maintenance bays
 7. Queue / guest loading model

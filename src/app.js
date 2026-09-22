@@ -18,6 +18,8 @@
     vehicleState: document.getElementById("vehicleState"),
     vehicleSpeed: document.getElementById("vehicleSpeed"),
     vehicleZone: document.getElementById("vehicleZone"),
+    vehicleBlock: document.getElementById("vehicleBlock"),
+    vehicleReservation: document.getElementById("vehicleReservation"),
     vehicleLap: document.getElementById("vehicleLap"),
     faultBtn: document.getElementById("faultBtn"),
     recoverBtn: document.getElementById("recoverBtn"),
@@ -38,6 +40,8 @@
     autoDispatchInterval: 7,
     vehicleRadius: 13,
     seatsPerVehicle: 6,
+    reservationRequestDistance: 125,
+    blockHoldBuffer: 34,
   };
 
   const route = [
@@ -76,6 +80,19 @@
     totalLength += length;
   }
 
+  const blocks = [
+    { id: "B0", name: "Station", startRatio: 0.00, endRatio: 0.15 },
+    { id: "B1", name: "Gallery", startRatio: 0.15, endRatio: 0.32 },
+    { id: "B2", name: "Machine Hall", startRatio: 0.32, endRatio: 0.49 },
+    { id: "B3", name: "The Void", startRatio: 0.49, endRatio: 0.66 },
+    { id: "B4", name: "Finale", startRatio: 0.66, endRatio: 0.84 },
+    { id: "B5", name: "Return", startRatio: 0.84, endRatio: 1.00 },
+  ].map((block) => ({
+    ...block,
+    start: block.startRatio * totalLength,
+    end: block.endRatio * totalLength,
+  }));
+
   let vehicles = [];
   let nextVehicleNumber = 1;
   let selectedVehicleId = null;
@@ -85,6 +102,8 @@
   let completedCycles = 0;
   let simulationSeconds = 0;
   let lastFrameTime = performance.now();
+  const blockReservations = new Map();
+  const blockHoldLog = new Set();
 
   function nowLabel() {
     const total = Math.floor(simulationSeconds);
@@ -123,6 +142,95 @@
     };
   }
 
+  function blockAtDistance(distance) {
+    const d = normalizeDistance(distance);
+    return blocks.find((block) => d >= block.start && d < block.end) || blocks[blocks.length - 1];
+  }
+
+  function nextBlock(block) {
+    const index = blocks.findIndex((candidate) => candidate.id === block.id);
+    return blocks[(index + 1) % blocks.length];
+  }
+
+  function distanceToBlockEnd(distance, block) {
+    const d = normalizeDistance(distance);
+    return Math.max(0, block.end - d);
+  }
+
+  function blockOccupants(blockId) {
+    return vehicles.filter((vehicle) => blockAtDistance(vehicle.distance).id === blockId);
+  }
+
+  function releaseVehicleReservation(vehicle) {
+    if (!vehicle || !vehicle.reservedBlockId) return;
+    if (blockReservations.get(vehicle.reservedBlockId) === vehicle.id) {
+      blockReservations.delete(vehicle.reservedBlockId);
+    }
+    vehicle.reservedBlockId = null;
+  }
+
+  function updateBlockControl() {
+    for (const [blockId, vehicleId] of [...blockReservations.entries()]) {
+      const vehicle = vehicles.find((candidate) => candidate.id === vehicleId);
+
+      if (!vehicle || vehicle.faulted) {
+        blockReservations.delete(blockId);
+        if (vehicle && vehicle.reservedBlockId === blockId) {
+          vehicle.reservedBlockId = null;
+        }
+        continue;
+      }
+
+      if (blockAtDistance(vehicle.distance).id === blockId) {
+        blockReservations.delete(blockId);
+        if (vehicle.reservedBlockId === blockId) {
+          vehicle.reservedBlockId = null;
+        }
+      }
+    }
+
+    const candidates = vehicles
+      .filter((vehicle) => !vehicle.faulted && vehicle.dwellRemaining <= 0)
+      .map((vehicle) => {
+        const current = blockAtDistance(vehicle.distance);
+        return {
+          vehicle,
+          current,
+          next: nextBlock(current),
+          distanceToEnd: distanceToBlockEnd(vehicle.distance, current),
+        };
+      })
+      .sort((a, b) => a.distanceToEnd - b.distanceToEnd);
+
+    for (const candidate of candidates) {
+      const { vehicle, next, distanceToEnd } = candidate;
+      if (distanceToEnd > CONFIG.reservationRequestDistance) continue;
+      if (vehicle.reservedBlockId === next.id && blockReservations.get(next.id) === vehicle.id) continue;
+
+      const occupants = blockOccupants(next.id).filter((occupant) => occupant.id !== vehicle.id);
+      const owner = blockReservations.get(next.id);
+
+      if (occupants.length > 0 || (owner && owner !== vehicle.id)) continue;
+
+      releaseVehicleReservation(vehicle);
+      blockReservations.set(next.id, vehicle.id);
+      vehicle.reservedBlockId = next.id;
+
+      logEvent("RESERVE", `${vehicle.id} reserved ${next.id} // ${next.name}.`, "good");
+
+      if (blockHoldLog.has(vehicle.id)) {
+        blockHoldLog.delete(vehicle.id);
+        logEvent("RELEASE", `${vehicle.id} released from block hold into ${next.id}.`, "good");
+      }
+    }
+  }
+
+  function vehicleHasNextBlockReservation(vehicle) {
+    const current = blockAtDistance(vehicle.distance);
+    const next = nextBlock(current);
+    return vehicle.reservedBlockId === next.id && blockReservations.get(next.id) === vehicle.id;
+  }
+
   function zoneAtPoint(point) {
     return zones.find((zone) =>
       point.x >= zone.x &&
@@ -146,6 +254,8 @@
       laps: 0,
       zoneName: "Transit",
       lastZoneName: null,
+      blockId: blockAtDistance(distance).id,
+      reservedBlockId: null,
     };
 
     vehicles.push(vehicle);
@@ -159,11 +269,14 @@
   }
 
   function stationClear() {
-    return !vehicles.some((vehicle) => {
-      const outgoing = vehicle.distance;
-      const incoming = totalLength - vehicle.distance;
-      return outgoing < CONFIG.dispatchClearance || incoming < 95;
-    });
+    const station = blocks[0];
+    const downstream = blocks[1];
+
+    const stationOccupied = blockOccupants(station.id).length > 0;
+    const downstreamOccupied = blockOccupants(downstream.id).length > 0;
+    const downstreamReserved = blockReservations.has(downstream.id);
+
+    return !stationOccupied && !downstreamOccupied && !downstreamReserved;
   }
 
   function dispatchVehicle() {
@@ -226,6 +339,25 @@
     const rideSpeedScale = Number(ui.speedRange.value) / 100;
     let targetSpeed = CONFIG.cruiseSpeed * rideSpeedScale;
     let spacingState = false;
+    let blockState = "RUNNING";
+    const currentBlock = blockAtDistance(vehicle.distance);
+    const upcomingBlock = nextBlock(currentBlock);
+    const boundaryDistance = distanceToBlockEnd(vehicle.distance, currentBlock);
+    const hasReservation = vehicleHasNextBlockReservation(vehicle);
+    const distanceToHold = Math.max(0, boundaryDistance - CONFIG.blockHoldBuffer);
+
+    vehicle.blockId = currentBlock.id;
+
+    if (!hasReservation) {
+      if (distanceToHold <= 0.5) {
+        targetSpeed = 0;
+        blockState = "BLOCK HOLD";
+      } else if (distanceToHold < 115) {
+        targetSpeed = Math.min(targetSpeed, Math.max(10, distanceToHold * 1.25));
+        blockState = "BLOCK APPROACH";
+      }
+    }
+
     const ahead = getVehicleAhead(vehicle);
 
     if (ahead) {
@@ -246,10 +378,31 @@
       vehicle.speed = Math.max(targetSpeed, vehicle.speed - acceleration * 1.4 * dt);
     }
 
-    vehicle.state = spacingState ? "SPACING HOLD" : "RUNNING";
+    vehicle.state = spacingState ? "SPACING HOLD" : blockState;
 
     const previousDistance = vehicle.distance;
-    const rawNext = previousDistance + vehicle.speed * dt;
+    let movement = vehicle.speed * dt;
+
+    if (!hasReservation) {
+      const maxMovement = Math.max(0, boundaryDistance - CONFIG.blockHoldBuffer);
+
+      if (movement >= maxMovement) {
+        movement = maxMovement;
+        vehicle.speed = 0;
+        vehicle.state = "BLOCK HOLD";
+
+        if (!blockHoldLog.has(vehicle.id)) {
+          blockHoldLog.add(vehicle.id);
+          logEvent(
+            "HOLD",
+            `${vehicle.id} holding in ${currentBlock.id}; ${upcomingBlock.id} unavailable.`,
+            "warn"
+          );
+        }
+      }
+    }
+
+    const rawNext = previousDistance + movement;
 
     if (rawNext >= totalLength) {
       vehicle.distance = rawNext - totalLength;
@@ -261,6 +414,18 @@
       logEvent("ARRIVAL", `${vehicle.id} returned to Load / Unload after lap ${vehicle.laps}.`, "good");
     } else {
       vehicle.distance = rawNext;
+    }
+
+    const enteredBlock = blockAtDistance(vehicle.distance);
+    vehicle.blockId = enteredBlock.id;
+
+    if (enteredBlock.id !== currentBlock.id) {
+      if (blockReservations.get(enteredBlock.id) === vehicle.id) {
+        blockReservations.delete(enteredBlock.id);
+      }
+      vehicle.reservedBlockId = null;
+      blockHoldLog.delete(vehicle.id);
+      logEvent("BLOCK", `${vehicle.id} entered ${enteredBlock.id} // ${enteredBlock.name}.`);
     }
 
     const position = pointAtDistance(vehicle.distance);
@@ -278,6 +443,7 @@
 
   function update(dt) {
     simulationSeconds += dt;
+    updateBlockControl();
 
     for (const vehicle of vehicles) {
       updateVehicle(vehicle, dt);
@@ -371,6 +537,35 @@
     ctx.restore();
   }
 
+  function drawBlockControls() {
+    ctx.save();
+    ctx.font = "800 10px ui-sans-serif, system-ui";
+    ctx.textAlign = "left";
+
+    for (const block of blocks) {
+      const point = pointAtDistance(block.start);
+      const occupied = blockOccupants(block.id).length > 0;
+      const reserved = blockReservations.has(block.id);
+      const color = occupied ? "#ff6471" : reserved ? "#ffd66b" : "#68d49a";
+
+      ctx.save();
+      ctx.translate(point.x, point.y);
+      ctx.rotate(point.heading);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(0, -14);
+      ctx.lineTo(0, 14);
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.fillStyle = color;
+      ctx.fillText(block.id, point.x + 8, point.y - 9);
+    }
+
+    ctx.restore();
+  }
+
   function drawStationGate() {
     const start = route[0];
 
@@ -434,6 +629,7 @@
     drawBackground();
     drawZones();
     drawRoute();
+    drawBlockControls();
     drawStationGate();
 
     for (const vehicle of vehicles) {
@@ -498,6 +694,9 @@
     ui.vehicleState.textContent = selected.state;
     ui.vehicleSpeed.textContent = `${Math.round(selected.speed)} px/s`;
     ui.vehicleZone.textContent = selected.zoneName;
+    const selectedBlock = blockAtDistance(selected.distance);
+    ui.vehicleBlock.textContent = `${selectedBlock.id} // ${selectedBlock.name}`;
+    ui.vehicleReservation.textContent = selected.reservedBlockId || "None";
     ui.vehicleLap.textContent = String(selected.laps);
     ui.faultBtn.disabled = selected.faulted;
     ui.recoverBtn.disabled = !selected.faulted;
@@ -536,6 +735,8 @@
     autoDispatchClock = 0;
     completedCycles = 0;
     simulationSeconds = 0;
+    blockReservations.clear();
+    blockHoldLog.clear();
     ui.eventLog.innerHTML = "";
 
     const seeded = [
@@ -578,6 +779,8 @@
     vehicle.faulted = true;
     vehicle.speed = 0;
     vehicle.state = "FAULT";
+    releaseVehicleReservation(vehicle);
+    blockHoldLog.delete(vehicle.id);
     logEvent("FAULT", `${vehicle.id} fault injected. Vehicle immobilized.`, "error");
     updateUi();
   });
@@ -588,6 +791,7 @@
 
     vehicle.faulted = false;
     vehicle.state = vehicle.dwellRemaining > 0 ? "STATION DWELL" : "RUNNING";
+    updateBlockControl();
     logEvent("RECOVER", `${vehicle.id} fault cleared and vehicle returned to service.`, "good");
     updateUi();
   });

@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dark Ride Simulator</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">RIDE CONTROL // OPERATIONS</p>
+        <h1>Dark Ride Simulator</h1>
+      </div>
+      <div class="system-pill" id="systemStatus">SYSTEM NORMAL</div>
+    </header>
+
+    <section class="dashboard-grid">
+      <section class="sim-panel panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">LIVE FLOOR</p>
+            <h2>Ride Layout</h2>
+          </div>
+          <div class="legend">
+            <span><i class="legend-dot vehicle-dot"></i>Vehicle</span>
+            <span><i class="legend-dot selected-dot"></i>Selected</span>
+            <span><i class="legend-dot fault-dot"></i>Fault</span>
+          </div>
+        </div>
+
+        <div class="canvas-wrap">
+          <canvas id="rideCanvas" width="1200" height="720"></canvas>
+        </div>
+      </section>
+
+      <aside class="control-stack">
+        <section class="panel">
+          <div class="panel-heading compact">
+            <div>
+              <p class="eyebrow">DISPATCH</p>
+              <h2>Ride Control</h2>
+            </div>
+          </div>
+
+          <div class="button-grid">
+            <button id="dispatchBtn" class="primary">Dispatch Vehicle</button>
+            <button id="autoDispatchBtn">Auto Dispatch: OFF</button>
+            <button id="rideStopBtn" class="danger">Ride Stop</button>
+            <button id="resetBtn">Reset Simulation</button>
+          </div>
+
+          <label class="field-label" for="speedRange">
+            Ride speed
+            <span id="speedValue">100%</span>
+          </label>
+          <input id="speedRange" type="range" min="40" max="160" value="100" step="10" />
+        </section>
+
+        <section class="panel">
+          <div class="panel-heading compact">
+            <div>
+              <p class="eyebrow">FLEET</p>
+              <h2>Selected Vehicle</h2>
+            </div>
+          </div>
+
+          <div id="vehicleEmpty" class="empty-state">Click a vehicle to inspect it.</div>
+
+          <div id="vehicleTelemetry" class="telemetry hidden">
+            <div class="telemetry-row"><span>ID</span><strong id="vehicleId">—</strong></div>
+            <div class="telemetry-row"><span>State</span><strong id="vehicleState">—</strong></div>
+            <div class="telemetry-row"><span>Speed</span><strong id="vehicleSpeed">—</strong></div>
+            <div class="telemetry-row"><span>Zone</span><strong id="vehicleZone">—</strong></div>
+            <div class="telemetry-row"><span>Lap</span><strong id="vehicleLap">—</strong></div>
+
+            <div class="button-grid vehicle-actions">
+              <button id="faultBtn" class="danger">Inject Fault</button>
+              <button id="recoverBtn">Recover Vehicle</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel metrics-panel">
+          <div class="metric">
+            <span>Active</span>
+            <strong id="activeMetric">0</strong>
+          </div>
+          <div class="metric">
+            <span>Completed</span>
+            <strong id="completedMetric">0</strong>
+          </div>
+          <div class="metric">
+            <span>Throughput/hr</span>
+            <strong id="throughputMetric">0</strong>
+          </div>
+          <div class="metric">
+            <span>Faults</span>
+            <strong id="faultMetric">0</strong>
+          </div>
+        </section>
+      </aside>
+    </section>
+
+    <section class="panel event-panel">
+      <div class="panel-heading compact">
+        <div>
+          <p class="eyebrow">EVENT BUS</p>
+          <h2>Operations Log</h2>
+        </div>
+        <button id="clearLogBtn" class="ghost">Clear Log</button>
+      </div>
+      <div id="eventLog" class="event-log" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <script src="src/app.js"></script>
+</body>
+</html>

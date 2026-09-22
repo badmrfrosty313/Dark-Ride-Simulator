@@ -2,28 +2,37 @@
 
 A systems-first simulator for trackless dark ride operations.
 
-The goal is not just to animate ride vehicles. The simulator models the operational logic behind a modern dark ride: dispatch, routing, show zones, vehicle spacing, station dwell, trigger events, faults, holds, and recovery.
+The project models the operational brain behind a modern dark ride: dispatch, vehicle routing, exclusive blocks, reservations, hold points, guest flow, maintenance routing, faults, operator lockouts, safety diagnostics, and recovery.
 
-## MVP
+## Current build
 
-The first playable build includes:
+The simulator currently includes:
 
-- top-down ride layout
-- waypoint-based trackless vehicle routing
-- load/unload station
+- top-down trackless ride layout
+- waypoint-based vehicle motion
+- six exclusive operational blocks
+- one-block-ahead reservation control
+- safe hold points before block boundaries
+- cascading upstream holds after faults
+- downstream station dispatch interlocks
+- proximity spacing as a secondary collision guard
 - manual and automatic dispatch
-- explicit operational blocks and hold points
-- one-block-ahead reservations
-- cascading block holds after faults
-- downstream dispatch interlocks
-- minimum vehicle spacing as a secondary collision guard
+- guest arrival queue and six-seat vehicle loading
+- live hourly-throughput calculation using actual guest completions
 - show-zone entry triggers
 - station dwell timing
-- vehicle selection and telemetry
+- individual vehicle telemetry
 - fault injection and recovery
-- emergency ride stop
-- live operations event log
-- throughput and fleet metrics
+- operator block lockouts
+- deterministic B3 cascade drill
+- downstream station-jam scenario
+- guest-surge scenario
+- maintenance requests, maintenance spur, service bay, and return-to-service flow
+- ride stop
+- safety invariants that assert ride stop on block occupancy / reservation violations
+- live block-status board
+- active-alarm board
+- operations event log
 
 ## Run
 
@@ -33,15 +42,19 @@ Open `index.html` in a modern browser.
 
 For the best local-development experience, use VS Code Live Server or any simple static HTTP server.
 
-## Controls
+## Core controls
 
-- **Dispatch Vehicle** adds a vehicle when the dispatch lane is clear.
-- **Auto Dispatch** releases vehicles automatically when operational conditions permit.
-- **Inject Fault** faults the selected vehicle.
-- **Recover Vehicle** clears the selected vehicle's fault.
-- **Ride Stop** freezes all ride motion.
-- **Reset Simulation** returns the ride to its initial state.
-- Click a vehicle on the map to inspect it.
+- **Dispatch Vehicle** adds a vehicle when station and downstream block conditions permit.
+- **Auto Dispatch** releases vehicles automatically as capacity becomes available.
+- **Ride Stop** freezes ride motion.
+- **Inject Fault / Recover Vehicle** manipulate the selected vehicle.
+- **Route to Maintenance** flags the selected vehicle to divert after its next completed circuit.
+- **Return to Service** returns a vehicle from the service bay when the station path is available.
+- **Toggle Lockout** removes or restores a selected operating block.
+- **Arm B3 Cascade** faults the next vehicle that enters B3.
+- **Jam Downstream** locks B1 to remove downstream station capacity.
+- **Guest Surge** raises arrivals to 60 guests/min and enables auto dispatch.
+- **Clear Scenario** returns scenario controls toward normal operation.
 
 ## Architecture
 
@@ -51,27 +64,29 @@ styles.css
 src/
   app.js
 docs/
+  CONTROL_SYSTEM.md
+  TEST_MATRIX.md
   PROJECT_STATE.md
   NEXT_SESSION_HANDOFF.md
 ```
 
-The simulation intentionally starts dependency-free so the ride-control model can mature before choosing a heavier rendering or game engine.
+The application intentionally remains dependency-free and directly openable while the operational model is evolving.
 
 ## Roadmap
 
 1. Operational MVP
-2. Editable routes and zones
-3. Editable block boundaries and route waypoints
-4. Switches / branching path logic
-5. Scene timing and synchronized show control
-6. Multiple stations and maintenance bays
-7. Queue / guest loading model
-8. Fault propagation, evacuation, and recovery procedures
-9. Saveable ride layouts
+2. Block reservation / fault cascade control
+3. Operations lab: guest flow, lockouts, maintenance, scenarios, safety diagnostics
+4. Editable route and block geometry
+5. Switches and true branching-path graph
+6. Scene timing and synchronized show control
+7. Evacuation and recovery procedures
+8. Multi-station / multi-bay operations
+9. Saveable ride layouts and scenarios
 10. Optional 3D visualization
 
 ## Design Principle
 
 **Simulation first, spectacle second.**
 
-If the operating logic is believable in a simple top-down view, prettier rendering can be layered on without rewriting the brain of the ride.
+If the operating logic is believable in a simple top-down view, richer rendering can be layered on without rewriting the brain of the ride.

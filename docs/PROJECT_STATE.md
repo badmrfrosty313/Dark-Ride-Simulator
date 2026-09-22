@@ -2,9 +2,9 @@
 
 ## Current milestone
 
-**MVP-02.5: Operations Lab**
+**MVP-03: Graph-Controlled Operations Lab**
 
-Status: implemented and statically validated; browser smoke test required after pull.
+Status: core implementation complete and statically validated. Only final browser smoke test / credits drill acceptance remains.
 
 ## Implemented systems
 
@@ -176,3 +176,37 @@ Recommended order:
 ## Design rule
 
 **Simulation first, spectacle second.**
+
+
+## Latest agentic pass
+
+The remaining architecture backlog was split into independent workstreams and consolidated.
+
+Completed in this pass:
+
+- canonical RouteGraph drives mainline geometry
+- directed mainline edges and N0 maintenance switch
+- graph-owned control-block topology/transitions
+- reusable ReservationTable used by runtime block reservations and lockouts
+- EM0 maintenance branch reservation lifecycle
+- maintenance switch / branch / bay / return merge flow
+- safety-stop debounce to reject one-frame transients
+- explicit stop source semantics: MANUAL / SAFETY / DESIGN / EVACUATION
+- draggable waypoint design mode
+- editable adjacent block boundaries
+- layout JSON export/import/reset
+- synchronized show timelines
+- evacuation and recovery-check workflow
+- automated full operations drill
+- zero-dependency static contract and RouteGraph regression tests
+- one-command Windows test runner
+
+Current acceptance gate:
+
+1. pull latest
+2. run `run-tests.cmd`
+3. open `index.html`
+4. click **Run Full Drill**
+5. verify drill reaches PASS with no SAFETY event
+
+If those pass, the current V1 has reached credits.

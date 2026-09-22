@@ -88,16 +88,10 @@
   let segments = [];
   let totalLength = 0;
 
-  const DEFAULT_BLOCK_DEFINITIONS = [
-    { id: "B0", name: "Station", startRatio: 0.00, endRatio: 0.15 },
-    { id: "B1", name: "Gallery", startRatio: 0.15, endRatio: 0.32 },
-    { id: "B2", name: "Machine Hall", startRatio: 0.32, endRatio: 0.49 },
-    { id: "B3", name: "The Void", startRatio: 0.49, endRatio: 0.66 },
-    { id: "B4", name: "Finale", startRatio: 0.66, endRatio: 0.84 },
-    { id: "B5", name: "Return", startRatio: 0.84, endRatio: 1.00 },
-  ];
+  const DEFAULT_BLOCK_DEFINITIONS =
+    window.DarkRideRouteGraph.defaultLayout().controlBlocks.map((block) => ({ ...block }));
 
-  let blockDefinitions = DEFAULT_BLOCK_DEFINITIONS.map((block) => ({ ...block }));
+  let blockDefinitions = routeGraph.controlBlocks.map((block) => ({ ...block }));
   let blocks = [];
   let maintenanceBay = { x: 82, y: 690 };
 
@@ -261,8 +255,10 @@
   }
 
   function nextBlock(block) {
-    const index = blocks.findIndex((candidate) => candidate.id === block.id);
-    return blocks[(index + 1) % blocks.length];
+    const nextDefinition = routeGraph.nextControlBlock(block.id);
+    return nextDefinition
+      ? blocks.find((candidate) => candidate.id === nextDefinition.id) || null
+      : null;
   }
 
   function distanceToBlockEnd(distance, block) {
@@ -514,6 +510,7 @@
   function vehicleHasNextBlockReservation(vehicle) {
     const current = blockAtDistance(vehicle.distance);
     const next = nextBlock(current);
+    if (!next) return false;
     return vehicle.reservedBlockId === next.id && blockReservations.get(next.id) === vehicle.id;
   }
 
@@ -1502,14 +1499,11 @@
     if (index < 0 || index >= blockDefinitions.length - 1) return;
 
     const current = blockDefinitions[index];
-    const next = blockDefinitions[index + 1];
     const requested = Number(ui.blockBoundaryRange.value) / 100;
-    const min = current.startRatio + 0.05;
-    const max = next.endRatio - 0.05;
-    const ratio = Math.max(min, Math.min(max, requested));
 
-    current.endRatio = ratio;
-    next.startRatio = ratio;
+    if (!routeGraph.setControlBoundary(current.id, requested)) return;
+
+    blockDefinitions = routeGraph.controlBlocks.map((block) => ({ ...block }));
     rebuildRouteGeometry();
     syncBlockBoundaryControl();
   });
@@ -1574,10 +1568,15 @@
       }
 
       routeGraph.load(data.routeGraph);
-      if (Array.isArray(data.blocks) && data.blocks.length === DEFAULT_BLOCK_DEFINITIONS.length) {
-        blockDefinitions = data.blocks.map((block) => ({ ...block }));
+      if (
+        Array.isArray(data.blocks) &&
+        data.blocks.length === DEFAULT_BLOCK_DEFINITIONS.length &&
+        (!routeGraph.controlBlocks || routeGraph.controlBlocks.length === 0)
+      ) {
+        routeGraph.setControlBlocks(data.blocks);
       }
 
+      blockDefinitions = routeGraph.controlBlocks.map((block) => ({ ...block }));
       rebuildRouteGeometry();
       resetSimulation();
       logEvent("LAYOUT", `Imported ${file.name}.`, "good");
@@ -1590,7 +1589,7 @@
 
   ui.resetLayoutBtn.addEventListener("click", () => {
     routeGraph.load(window.DarkRideRouteGraph.defaultLayout());
-    blockDefinitions = DEFAULT_BLOCK_DEFINITIONS.map((block) => ({ ...block }));
+    blockDefinitions = routeGraph.controlBlocks.map((block) => ({ ...block }));
     rebuildRouteGeometry();
     resetSimulation();
     logEvent("LAYOUT", "Default route graph restored.", "good");

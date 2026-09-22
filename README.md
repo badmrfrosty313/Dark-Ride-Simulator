@@ -112,3 +112,18 @@ Use **Run Full Drill** in the Operations Lab. It automatically drives:
 `fault → cascade → recovery → maintenance → return to service`
 
 The drill reports PASS only if it reaches normal service without a safety stop.
+
+
+## V1 Status
+
+**COMPLETE**
+
+V1 passed its static suites, browser smoke test, and automated full operations drill on 2026-09-22.
+
+The accepted V1 demonstrates a complete operational scenario:
+
+`fault → cascade → recovery → maintenance → return to service`
+
+with no safety-control violation.
+
+Anything beyond this point is V2.

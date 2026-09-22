@@ -208,8 +208,60 @@
     }
   }
 
+  class ReservationTable {
+    constructor() {
+      this.reservations = new Map();
+      this.locked = new Set();
+    }
+
+    owner(resourceId) {
+      return this.reservations.get(resourceId) || null;
+    }
+
+    isLocked(resourceId) {
+      return this.locked.has(resourceId);
+    }
+
+    canReserve(resourceId, ownerId) {
+      if (this.isLocked(resourceId)) return false;
+      const owner = this.owner(resourceId);
+      return !owner || owner === ownerId;
+    }
+
+    reserve(resourceId, ownerId) {
+      if (!resourceId || !ownerId || !this.canReserve(resourceId, ownerId)) return false;
+      this.reservations.set(resourceId, ownerId);
+      return true;
+    }
+
+    release(resourceId, ownerId = null) {
+      const owner = this.owner(resourceId);
+      if (!owner) return true;
+      if (ownerId && owner !== ownerId) return false;
+      this.reservations.delete(resourceId);
+      return true;
+    }
+
+    lock(resourceId) {
+      const revokedOwner = this.owner(resourceId);
+      this.reservations.delete(resourceId);
+      this.locked.add(resourceId);
+      return revokedOwner;
+    }
+
+    unlock(resourceId) {
+      this.locked.delete(resourceId);
+    }
+
+    clear() {
+      this.reservations.clear();
+      this.locked.clear();
+    }
+  }
+
   window.DarkRideRouteGraph = {
     RouteGraph,
+    ReservationTable,
     defaultLayout: () => JSON.parse(JSON.stringify(DEFAULT_LAYOUT)),
   };
 })();

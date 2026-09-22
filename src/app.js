@@ -52,6 +52,8 @@
     resetLayoutBtn: document.getElementById("resetLayoutBtn"),
     layoutFileInput: document.getElementById("layoutFileInput"),
     designHint: document.getElementById("designHint"),
+    blockBoundaryRange: document.getElementById("blockBoundaryRange"),
+    blockBoundaryValue: document.getElementById("blockBoundaryValue"),
     showBoard: document.getElementById("showBoard"),
   };
 
@@ -1077,6 +1079,21 @@
       : "No active alarms.";
   }
 
+  function syncBlockBoundaryControl() {
+    const index = blockDefinitions.findIndex((block) => block.id === ui.blockSelect.value);
+    const current = blockDefinitions[index];
+
+    if (!current || index < 0 || index >= blockDefinitions.length - 1) {
+      ui.blockBoundaryRange.disabled = true;
+      ui.blockBoundaryValue.textContent = "Loop end";
+      return;
+    }
+
+    ui.blockBoundaryRange.disabled = !designMode;
+    ui.blockBoundaryRange.value = String(Math.round(current.endRatio * 100));
+    ui.blockBoundaryValue.textContent = `${Math.round(current.endRatio * 100)}%`;
+  }
+
   function renderShowBoard() {
     ui.showBoard.innerHTML = showTimelines.map((timeline) => {
       const state = showStates.get(timeline.zone);
@@ -1142,6 +1159,7 @@
       ? "Drag gold route nodes. Design mode holds the ride stopped."
       : "Design mode off. Vehicles own the floor.";
     canvas.parentElement.classList.toggle("design-active", designMode);
+    syncBlockBoundaryControl();
 
     if (!selected) {
       ui.vehicleEmpty.classList.remove("hidden");
@@ -1399,6 +1417,39 @@
 
     logEvent("RECOVERY", "Evacuation recovery check passed. Ride returned to controlled operation.", "good");
     updateUi();
+  });
+
+  ui.blockSelect.addEventListener("change", () => {
+    syncBlockBoundaryControl();
+  });
+
+  ui.blockBoundaryRange.addEventListener("input", () => {
+    if (!designMode) return;
+
+    const index = blockDefinitions.findIndex((block) => block.id === ui.blockSelect.value);
+    if (index < 0 || index >= blockDefinitions.length - 1) return;
+
+    const current = blockDefinitions[index];
+    const next = blockDefinitions[index + 1];
+    const requested = Number(ui.blockBoundaryRange.value) / 100;
+    const min = current.startRatio + 0.05;
+    const max = next.endRatio - 0.05;
+    const ratio = Math.max(min, Math.min(max, requested));
+
+    current.endRatio = ratio;
+    next.startRatio = ratio;
+    rebuildRouteGeometry();
+    syncBlockBoundaryControl();
+  });
+
+  ui.blockBoundaryRange.addEventListener("change", () => {
+    if (!designMode) return;
+    const index = blockDefinitions.findIndex((block) => block.id === ui.blockSelect.value);
+    if (index < 0 || index >= blockDefinitions.length - 1) return;
+    logEvent(
+      "DESIGN",
+      `${blockDefinitions[index].id}/${blockDefinitions[index + 1].id} boundary moved to ${Math.round(blockDefinitions[index].endRatio * 100)}%.`
+    );
   });
 
   ui.designModeBtn.addEventListener("click", () => {

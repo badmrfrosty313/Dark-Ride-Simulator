@@ -20,15 +20,30 @@
     vehicleZone: document.getElementById("vehicleZone"),
     vehicleBlock: document.getElementById("vehicleBlock"),
     vehicleReservation: document.getElementById("vehicleReservation"),
+    vehicleOnboard: document.getElementById("vehicleOnboard"),
     vehicleLap: document.getElementById("vehicleLap"),
     faultBtn: document.getElementById("faultBtn"),
     recoverBtn: document.getElementById("recoverBtn"),
+    maintenanceBtn: document.getElementById("maintenanceBtn"),
+    returnServiceBtn: document.getElementById("returnServiceBtn"),
     activeMetric: document.getElementById("activeMetric"),
     completedMetric: document.getElementById("completedMetric"),
     throughputMetric: document.getElementById("throughputMetric"),
     faultMetric: document.getElementById("faultMetric"),
     eventLog: document.getElementById("eventLog"),
     clearLogBtn: document.getElementById("clearLogBtn"),
+    blockBoard: document.getElementById("blockBoard"),
+    blockSelect: document.getElementById("blockSelect"),
+    toggleBlockLockBtn: document.getElementById("toggleBlockLockBtn"),
+    queueMetric: document.getElementById("queueMetric"),
+    loadedMetric: document.getElementById("loadedMetric"),
+    arrivalRateRange: document.getElementById("arrivalRateRange"),
+    arrivalRateValue: document.getElementById("arrivalRateValue"),
+    scenarioCascadeBtn: document.getElementById("scenarioCascadeBtn"),
+    scenarioJamBtn: document.getElementById("scenarioJamBtn"),
+    scenarioSurgeBtn: document.getElementById("scenarioSurgeBtn"),
+    clearScenarioBtn: document.getElementById("clearScenarioBtn"),
+    alarmList: document.getElementById("alarmList"),
   };
 
   const CONFIG = {
@@ -42,6 +57,8 @@
     seatsPerVehicle: 6,
     reservationRequestDistance: 125,
     blockHoldBuffer: 34,
+    maintenanceTransitSeconds: 2.8,
+    initialQueue: 24,
   };
 
   const route = [
@@ -104,6 +121,15 @@
   let lastFrameTime = performance.now();
   const blockReservations = new Map();
   const blockHoldLog = new Set();
+  const lockedBlocks = new Set();
+  const safetyLatch = new Set();
+  const maintenanceBay = { x: 82, y: 690 };
+
+  let guestQueue = CONFIG.initialQueue;
+  let guestsLoaded = 0;
+  let guestCompletions = 0;
+  let guestArrivalCarry = 0;
+  let pendingScenario = null;
 
   function nowLabel() {
     const total = Math.floor(simulationSeconds);
@@ -158,7 +184,104 @@
   }
 
   function blockOccupants(blockId) {
-    return vehicles.filter((vehicle) => blockAtDistance(vehicle.distance).id === blockId);
+    return vehicles.filter(
+      (vehicle) =>
+        vehicle.maintenanceState === "NONE" &&
+        blockAtDistance(vehicle.distance).id === blockId
+    );
+  }
+
+  function mainlineVehicles() {
+    return vehicles.filter((vehicle) => vehicle.maintenanceState === "NONE");
+  }
+
+  function loadVehicle(vehicle) {
+    const capacity = Math.max(0, CONFIG.seatsPerVehicle - vehicle.onboardGuests);
+    const loaded = Math.min(capacity, Math.floor(guestQueue));
+
+    if (loaded <= 0) {
+      logEvent("LOAD", `${vehicle.id} departed with no waiting guests.`, "warn");
+      return 0;
+    }
+
+    vehicle.onboardGuests += loaded;
+    guestQueue -= loaded;
+    guestsLoaded += loaded;
+    logEvent("LOAD", `${vehicle.id} loaded ${loaded} guest${loaded === 1 ? "" : "s"}.`, "good");
+    return loaded;
+  }
+
+  function maintenancePoint(vehicle) {
+    const station = pointAtDistance(0);
+    const t = Math.max(0, Math.min(1, vehicle.maintenanceProgress));
+    return {
+      x: station.x + (maintenanceBay.x - station.x) * t,
+      y: station.y + (maintenanceBay.y - station.y) * t,
+      heading: Math.atan2(maintenanceBay.y - station.y, maintenanceBay.x - station.x),
+    };
+  }
+
+  function updateMaintenanceVehicle(vehicle, dt) {
+    vehicle.speed = 0;
+    vehicle.zoneName = "Maintenance Bay";
+    vehicle.reservedBlockId = null;
+
+    if (vehicle.maintenanceState === "TO_BAY") {
+      vehicle.state = "TO MAINTENANCE";
+      vehicle.maintenanceProgress = Math.min(
+        1,
+        vehicle.maintenanceProgress + dt / CONFIG.maintenanceTransitSeconds
+      );
+
+      if (vehicle.maintenanceProgress >= 1) {
+        vehicle.maintenanceState = "IN_BAY";
+        vehicle.state = "MAINTENANCE";
+        logEvent("SERVICE", `${vehicle.id} secured in maintenance bay.`, "warn");
+      }
+      return;
+    }
+
+    if (vehicle.maintenanceState === "IN_BAY") {
+      vehicle.state = "MAINTENANCE";
+      return;
+    }
+
+    if (vehicle.maintenanceState === "RETURNING") {
+      vehicle.state = "RETURN TO SERVICE";
+      vehicle.maintenanceProgress = Math.max(
+        0,
+        vehicle.maintenanceProgress - dt / CONFIG.maintenanceTransitSeconds
+      );
+
+      if (vehicle.maintenanceProgress <= 0) {
+        vehicle.maintenanceState = "NONE";
+        vehicle.distance = 0;
+        vehicle.dwellRemaining = CONFIG.stationDwellSeconds;
+        vehicle.state = "STATION DWELL";
+        vehicle.zoneName = "Load / Unload";
+        logEvent("SERVICE", `${vehicle.id} returned to the station for loading.`, "good");
+      }
+    }
+  }
+
+  function faultVehicle(vehicle, source = "Operator") {
+    if (!vehicle || vehicle.faulted || vehicle.maintenanceState !== "NONE") return false;
+    vehicle.faulted = true;
+    vehicle.speed = 0;
+    vehicle.state = "FAULT";
+    releaseVehicleReservation(vehicle);
+    blockHoldLog.delete(vehicle.id);
+    logEvent("FAULT", `${vehicle.id} faulted by ${source}. Vehicle immobilized.`, "error");
+    return true;
+  }
+
+  function recoverVehicle(vehicle) {
+    if (!vehicle || !vehicle.faulted) return false;
+    vehicle.faulted = false;
+    vehicle.state = vehicle.dwellRemaining > 0 ? "STATION DWELL" : "RUNNING";
+    updateBlockControl();
+    logEvent("RECOVER", `${vehicle.id} fault cleared and vehicle returned to service.`, "good");
+    return true;
   }
 
   function releaseVehicleReservation(vehicle) {
@@ -173,7 +296,7 @@
     for (const [blockId, vehicleId] of [...blockReservations.entries()]) {
       const vehicle = vehicles.find((candidate) => candidate.id === vehicleId);
 
-      if (!vehicle || vehicle.faulted) {
+      if (!vehicle || vehicle.faulted || vehicle.maintenanceState !== "NONE") {
         blockReservations.delete(blockId);
         if (vehicle && vehicle.reservedBlockId === blockId) {
           vehicle.reservedBlockId = null;
@@ -190,7 +313,12 @@
     }
 
     const candidates = vehicles
-      .filter((vehicle) => !vehicle.faulted && vehicle.dwellRemaining <= 0)
+      .filter(
+        (vehicle) =>
+          !vehicle.faulted &&
+          vehicle.maintenanceState === "NONE" &&
+          vehicle.dwellRemaining <= 0
+      )
       .map((vehicle) => {
         const current = blockAtDistance(vehicle.distance);
         return {
@@ -210,7 +338,11 @@
       const occupants = blockOccupants(next.id).filter((occupant) => occupant.id !== vehicle.id);
       const owner = blockReservations.get(next.id);
 
-      if (occupants.length > 0 || (owner && owner !== vehicle.id)) continue;
+      if (
+        lockedBlocks.has(next.id) ||
+        occupants.length > 0 ||
+        (owner && owner !== vehicle.id)
+      ) continue;
 
       releaseVehicleReservation(vehicle);
       blockReservations.set(next.id, vehicle.id);
@@ -256,12 +388,17 @@
       lastZoneName: null,
       blockId: blockAtDistance(distance).id,
       reservedBlockId: null,
+      onboardGuests: 0,
+      maintenanceRequested: false,
+      maintenanceState: "NONE",
+      maintenanceProgress: 0,
     };
 
     vehicles.push(vehicle);
     selectedVehicleId = id;
 
     if (announce) {
+      loadVehicle(vehicle);
       logEvent("DISPATCH", `${id} released from Load / Unload.`, "good");
     }
 
@@ -275,8 +412,9 @@
     const stationOccupied = blockOccupants(station.id).length > 0;
     const downstreamOccupied = blockOccupants(downstream.id).length > 0;
     const downstreamReserved = blockReservations.has(downstream.id);
+    const locked = lockedBlocks.has(station.id) || lockedBlocks.has(downstream.id);
 
-    return !stationOccupied && !downstreamOccupied && !downstreamReserved;
+    return !locked && !stationOccupied && !downstreamOccupied && !downstreamReserved;
   }
 
   function dispatchVehicle() {
@@ -300,7 +438,7 @@
     let best = null;
     let bestGap = Infinity;
 
-    for (const other of vehicles) {
+    for (const other of mainlineVehicles()) {
       if (other.id === vehicle.id) continue;
       const gap = normalizeDistance(other.distance - vehicle.distance);
       if (gap > 0.001 && gap < bestGap) {
@@ -313,14 +451,19 @@
   }
 
   function updateVehicle(vehicle, dt) {
-    if (vehicle.faulted) {
+    if (rideStopped) {
       vehicle.speed = 0;
-      vehicle.state = "FAULT";
       return;
     }
 
-    if (rideStopped) {
+    if (vehicle.maintenanceState !== "NONE") {
+      updateMaintenanceVehicle(vehicle, dt);
+      return;
+    }
+
+    if (vehicle.faulted) {
       vehicle.speed = 0;
+      vehicle.state = "FAULT";
       return;
     }
 
@@ -330,6 +473,7 @@
       vehicle.state = "STATION DWELL";
 
       if (vehicle.dwellRemaining === 0) {
+        loadVehicle(vehicle);
         vehicle.state = "RUNNING";
         logEvent("DISPATCH", `${vehicle.id} station dwell complete; vehicle released.`, "good");
       }
@@ -408,8 +552,22 @@
       vehicle.distance = rawNext - totalLength;
       vehicle.laps += 1;
       completedCycles += 1;
-      vehicle.dwellRemaining = CONFIG.stationDwellSeconds;
+      guestCompletions += vehicle.onboardGuests;
+      vehicle.onboardGuests = 0;
       vehicle.speed = 0;
+
+      if (vehicle.maintenanceRequested) {
+        vehicle.maintenanceRequested = false;
+        vehicle.maintenanceState = "TO_BAY";
+        vehicle.maintenanceProgress = 0;
+        vehicle.state = "TO MAINTENANCE";
+        releaseVehicleReservation(vehicle);
+        blockHoldLog.delete(vehicle.id);
+        logEvent("SERVICE", `${vehicle.id} diverted from station to maintenance bay.`, "warn");
+        return;
+      }
+
+      vehicle.dwellRemaining = CONFIG.stationDwellSeconds;
       vehicle.state = "STATION DWELL";
       logEvent("ARRIVAL", `${vehicle.id} returned to Load / Unload after lap ${vehicle.laps}.`, "good");
     } else {
@@ -443,11 +601,30 @@
 
   function update(dt) {
     simulationSeconds += dt;
+
+    const arrivalRate = Number(ui.arrivalRateRange.value);
+    guestArrivalCarry += (arrivalRate * dt) / 60;
+    const arrivals = Math.floor(guestArrivalCarry);
+    if (arrivals > 0) {
+      guestQueue += arrivals;
+      guestArrivalCarry -= arrivals;
+    }
+
     updateBlockControl();
 
     for (const vehicle of vehicles) {
       updateVehicle(vehicle, dt);
     }
+
+    if (pendingScenario && pendingScenario.type === "FAULT_ON_BLOCK") {
+      const target = blockOccupants(pendingScenario.blockId).find((vehicle) => !vehicle.faulted);
+      if (target) {
+        faultVehicle(target, "B3 cascade drill");
+        pendingScenario = null;
+      }
+    }
+
+    runSafetyDiagnostics();
 
     if (autoDispatch && !rideStopped) {
       autoDispatchClock += dt;
@@ -546,7 +723,8 @@
       const point = pointAtDistance(block.start);
       const occupied = blockOccupants(block.id).length > 0;
       const reserved = blockReservations.has(block.id);
-      const color = occupied ? "#ff6471" : reserved ? "#ffd66b" : "#68d49a";
+      const locked = lockedBlocks.has(block.id);
+      const color = occupied ? "#ff6471" : locked ? "#b88ad4" : reserved ? "#ffd66b" : "#68d49a";
 
       ctx.save();
       ctx.translate(point.x, point.y);
@@ -563,6 +741,30 @@
       ctx.fillText(block.id, point.x + 8, point.y - 9);
     }
 
+    ctx.restore();
+  }
+
+  function drawMaintenanceBay() {
+    const station = pointAtDistance(0);
+
+    ctx.save();
+    ctx.strokeStyle = "#526270";
+    ctx.lineWidth = 7;
+    ctx.setLineDash([6, 7]);
+    ctx.beginPath();
+    ctx.moveTo(station.x, station.y);
+    ctx.lineTo(maintenanceBay.x, maintenanceBay.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = "rgba(82, 98, 112, 0.12)";
+    ctx.strokeStyle = "#526270";
+    ctx.lineWidth = 2;
+    ctx.fillRect(35, 655, 115, 48);
+    ctx.strokeRect(35, 655, 115, 48);
+    ctx.fillStyle = "#8ea3ad";
+    ctx.font = "800 10px ui-sans-serif, system-ui";
+    ctx.fillText("MAINTENANCE", 45, 674);
     ctx.restore();
   }
 
@@ -584,7 +786,10 @@
   }
 
   function drawVehicle(vehicle) {
-    const point = pointAtDistance(vehicle.distance);
+    const point =
+      vehicle.maintenanceState === "NONE"
+        ? pointAtDistance(vehicle.distance)
+        : maintenancePoint(vehicle);
     const selected = vehicle.id === selectedVehicleId;
 
     ctx.save();
@@ -599,8 +804,18 @@
       ctx.stroke();
     }
 
-    ctx.fillStyle = vehicle.faulted ? "#ff6471" : "#83d7e8";
-    ctx.strokeStyle = vehicle.faulted ? "#8d2730" : "#254f5a";
+    ctx.fillStyle =
+      vehicle.maintenanceState !== "NONE"
+        ? "#a894bd"
+        : vehicle.faulted
+          ? "#ff6471"
+          : "#83d7e8";
+    ctx.strokeStyle =
+      vehicle.maintenanceState !== "NONE"
+        ? "#5b496c"
+        : vehicle.faulted
+          ? "#8d2730"
+          : "#254f5a";
     ctx.lineWidth = 2;
 
     ctx.beginPath();
@@ -629,6 +844,7 @@
     drawBackground();
     drawZones();
     drawRoute();
+    drawMaintenanceBay();
     drawBlockControls();
     drawStationGate();
 
@@ -652,6 +868,93 @@
     return vehicles.find((vehicle) => vehicle.id === selectedVehicleId) || null;
   }
 
+  function runSafetyDiagnostics() {
+    for (const block of blocks) {
+      const occupants = blockOccupants(block.id);
+      const overlapKey = `OVERLAP:${block.id}`;
+
+      if (occupants.length > 1) {
+        if (!safetyLatch.has(overlapKey)) {
+          safetyLatch.add(overlapKey);
+          rideStopped = true;
+          logEvent(
+            "SAFETY",
+            `${block.id} occupancy violation: ${occupants.map((vehicle) => vehicle.id).join(", ")}. Ride stop asserted.`,
+            "error"
+          );
+        }
+      } else {
+        safetyLatch.delete(overlapKey);
+      }
+
+      const owner = blockReservations.get(block.id);
+      const conflict = owner && occupants.some((vehicle) => vehicle.id !== owner);
+      const conflictKey = `RESERVATION:${block.id}`;
+
+      if (conflict) {
+        if (!safetyLatch.has(conflictKey)) {
+          safetyLatch.add(conflictKey);
+          rideStopped = true;
+          logEvent(
+            "SAFETY",
+            `${block.id} reservation conflict detected. Ride stop asserted.`,
+            "error"
+          );
+        }
+      } else {
+        safetyLatch.delete(conflictKey);
+      }
+    }
+  }
+
+  function renderBlockBoard() {
+    ui.blockBoard.innerHTML = blocks.map((block) => {
+      const occupants = blockOccupants(block.id);
+      const reservedBy = blockReservations.get(block.id);
+      const locked = lockedBlocks.has(block.id);
+      const status = occupants.length > 0
+        ? "occupied"
+        : locked
+          ? "locked"
+          : reservedBy
+            ? "reserved"
+            : "clear";
+      const detail = occupants.length > 0
+        ? `OCC: ${occupants.map((vehicle) => vehicle.id).join(", ")}`
+        : locked
+          ? "OPERATOR LOCKOUT"
+          : reservedBy
+            ? `RES: ${reservedBy}`
+            : "AVAILABLE";
+
+      return `<div class="block-card ${status}">
+        <strong>${block.id} // ${block.name}</strong>
+        <span>${detail}</span>
+      </div>`;
+    }).join("");
+  }
+
+  function renderAlarms() {
+    const alarms = [];
+
+    for (const vehicle of vehicles) {
+      if (vehicle.faulted) alarms.push({ text: `${vehicle.id} FAULT`, warn: false });
+      if (vehicle.maintenanceRequested) alarms.push({ text: `${vehicle.id} MAINTENANCE REQUEST`, warn: true });
+    }
+
+    for (const blockId of lockedBlocks) {
+      alarms.push({ text: `${blockId} OPERATOR LOCKOUT`, warn: true });
+    }
+
+    if (pendingScenario) alarms.push({ text: "B3 CASCADE DRILL ARMED", warn: true });
+    for (const key of safetyLatch) alarms.push({ text: `SAFETY ${key}`, warn: false });
+    if (rideStopped) alarms.push({ text: "RIDE STOP ACTIVE", warn: false });
+
+    ui.alarmList.innerHTML = alarms.length
+      ? alarms.map((alarm) => `<div class="alarm-item ${alarm.warn ? "warn" : ""}">${alarm.text}</div>`).join("")
+      : "No active alarms.";
+  }
+
   function updateUi() {
     const selected = selectedVehicle();
     const faultCount = vehicles.filter((vehicle) => vehicle.faulted).length;
@@ -672,15 +975,20 @@
       ui.systemStatus.classList.remove("stop");
     }
 
-    ui.activeMetric.textContent = String(vehicles.length);
+    ui.activeMetric.textContent = String(mainlineVehicles().length);
     ui.completedMetric.textContent = String(completedCycles);
     ui.faultMetric.textContent = String(faultCount);
+    ui.queueMetric.textContent = String(Math.floor(guestQueue));
+    ui.loadedMetric.textContent = String(guestsLoaded);
+    ui.arrivalRateValue.textContent = `${ui.arrivalRateRange.value}/min`;
 
-    const guestCompletions = completedCycles * CONFIG.seatsPerVehicle;
     const throughput = simulationSeconds >= 30
       ? Math.round(guestCompletions / (simulationSeconds / 3600))
       : 0;
     ui.throughputMetric.textContent = String(throughput);
+
+    renderBlockBoard();
+    renderAlarms();
 
     if (!selected) {
       ui.vehicleEmpty.classList.remove("hidden");
@@ -694,12 +1002,22 @@
     ui.vehicleState.textContent = selected.state;
     ui.vehicleSpeed.textContent = `${Math.round(selected.speed)} px/s`;
     ui.vehicleZone.textContent = selected.zoneName;
-    const selectedBlock = blockAtDistance(selected.distance);
-    ui.vehicleBlock.textContent = `${selectedBlock.id} // ${selectedBlock.name}`;
+    const selectedBlock =
+      selected.maintenanceState === "NONE" ? blockAtDistance(selected.distance) : null;
+    ui.vehicleBlock.textContent = selectedBlock
+      ? `${selectedBlock.id} // ${selectedBlock.name}`
+      : "SERVICE BAY";
     ui.vehicleReservation.textContent = selected.reservedBlockId || "None";
+    ui.vehicleOnboard.textContent = `${selected.onboardGuests}/${CONFIG.seatsPerVehicle}`;
     ui.vehicleLap.textContent = String(selected.laps);
-    ui.faultBtn.disabled = selected.faulted;
+    ui.faultBtn.disabled = selected.faulted || selected.maintenanceState !== "NONE";
     ui.recoverBtn.disabled = !selected.faulted;
+    ui.maintenanceBtn.disabled =
+      selected.faulted ||
+      selected.maintenanceRequested ||
+      selected.maintenanceState !== "NONE";
+    ui.returnServiceBtn.disabled =
+      selected.maintenanceState !== "IN_BAY" || !stationClear();
   }
 
   function selectVehicleFromPointer(event) {
@@ -735,8 +1053,16 @@
     autoDispatchClock = 0;
     completedCycles = 0;
     simulationSeconds = 0;
+    guestQueue = CONFIG.initialQueue;
+    guestsLoaded = 0;
+    guestCompletions = 0;
+    guestArrivalCarry = 0;
+    pendingScenario = null;
     blockReservations.clear();
     blockHoldLog.clear();
+    lockedBlocks.clear();
+    safetyLatch.clear();
+    ui.arrivalRateRange.value = "24";
     ui.eventLog.innerHTML = "";
 
     const seeded = [
@@ -744,6 +1070,11 @@
       createVehicle(totalLength * 0.34, false),
       createVehicle(totalLength * 0.68, false),
     ];
+
+    for (const vehicle of seeded) {
+      vehicle.onboardGuests = CONFIG.seatsPerVehicle;
+      guestsLoaded += CONFIG.seatsPerVehicle;
+    }
 
     selectedVehicleId = seeded[0].id;
     logEvent("SYSTEM", "Simulation initialized with three ride vehicles.", "good");
@@ -773,26 +1104,85 @@
   ui.resetBtn.addEventListener("click", resetSimulation);
 
   ui.faultBtn.addEventListener("click", () => {
-    const vehicle = selectedVehicle();
-    if (!vehicle || vehicle.faulted) return;
-
-    vehicle.faulted = true;
-    vehicle.speed = 0;
-    vehicle.state = "FAULT";
-    releaseVehicleReservation(vehicle);
-    blockHoldLog.delete(vehicle.id);
-    logEvent("FAULT", `${vehicle.id} fault injected. Vehicle immobilized.`, "error");
+    faultVehicle(selectedVehicle());
     updateUi();
   });
 
   ui.recoverBtn.addEventListener("click", () => {
-    const vehicle = selectedVehicle();
-    if (!vehicle || !vehicle.faulted) return;
+    recoverVehicle(selectedVehicle());
+    updateUi();
+  });
 
-    vehicle.faulted = false;
-    vehicle.state = vehicle.dwellRemaining > 0 ? "STATION DWELL" : "RUNNING";
+  ui.maintenanceBtn.addEventListener("click", () => {
+    const vehicle = selectedVehicle();
+    if (!vehicle || vehicle.faulted || vehicle.maintenanceState !== "NONE") return;
+    vehicle.maintenanceRequested = true;
+    logEvent("SERVICE", `${vehicle.id} will divert to maintenance at next station arrival.`, "warn");
+    updateUi();
+  });
+
+  ui.returnServiceBtn.addEventListener("click", () => {
+    const vehicle = selectedVehicle();
+    if (!vehicle || vehicle.maintenanceState !== "IN_BAY") return;
+
+    if (!stationClear()) {
+      logEvent("DENIED", `${vehicle.id} return blocked; station path is unavailable.`, "warn");
+      return;
+    }
+
+    vehicle.maintenanceState = "RETURNING";
+    vehicle.state = "RETURN TO SERVICE";
+    logEvent("SERVICE", `${vehicle.id} released from maintenance bay.`, "good");
+    updateUi();
+  });
+
+  ui.toggleBlockLockBtn.addEventListener("click", () => {
+    const blockId = ui.blockSelect.value;
+
+    if (lockedBlocks.has(blockId)) {
+      lockedBlocks.delete(blockId);
+      logEvent("LOCKOUT", `${blockId} returned to service.`, "good");
+    } else {
+      lockedBlocks.add(blockId);
+      logEvent("LOCKOUT", `${blockId} removed from service by operator.`, "warn");
+    }
+
     updateBlockControl();
-    logEvent("RECOVER", `${vehicle.id} fault cleared and vehicle returned to service.`, "good");
+    updateUi();
+  });
+
+  ui.scenarioCascadeBtn.addEventListener("click", () => {
+    pendingScenario = { type: "FAULT_ON_BLOCK", blockId: "B3" };
+    autoDispatch = true;
+    logEvent("SCENARIO", "B3 cascade drill armed. Next vehicle entering B3 will fault.", "warn");
+    updateUi();
+  });
+
+  ui.scenarioJamBtn.addEventListener("click", () => {
+    lockedBlocks.add("B1");
+    logEvent("SCENARIO", "B1 downstream station lockout applied.", "warn");
+    updateUi();
+  });
+
+  ui.scenarioSurgeBtn.addEventListener("click", () => {
+    ui.arrivalRateRange.value = "60";
+    autoDispatch = true;
+    logEvent("SCENARIO", "Guest surge active: arrivals set to 60/min with auto dispatch enabled.", "warn");
+    updateUi();
+  });
+
+  ui.clearScenarioBtn.addEventListener("click", () => {
+    pendingScenario = null;
+    lockedBlocks.clear();
+    autoDispatch = false;
+    rideStopped = false;
+    safetyLatch.clear();
+
+    for (const vehicle of vehicles) {
+      if (vehicle.faulted) recoverVehicle(vehicle);
+    }
+
+    logEvent("SCENARIO", "Scenario controls cleared and normal operations restored.", "good");
     updateUi();
   });
 

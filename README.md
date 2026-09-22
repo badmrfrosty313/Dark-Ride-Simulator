@@ -27,9 +27,12 @@ The simulator currently includes:
 - deterministic B3 cascade drill
 - downstream station-jam scenario
 - guest-surge scenario
-- maintenance requests, maintenance spur, service bay, and return-to-service flow
+- formal RouteGraph with directed mainline edges, control-block topology, and maintenance branch
+- maintenance requests, graph switch/branch reservation, service bay, merge, and return-to-service flow
 - ride stop
-- safety invariants that assert ride stop on block occupancy / reservation violations
+- safety invariants that assert ride stop on persistent block occupancy / reservation violations
+- distinct manual, safety, design, and evacuation stop semantics
+- autonomous full operations drill with PASS/FAIL state
 - live block-status board
 - active-alarm board
 - operations event log
@@ -90,3 +93,22 @@ The application intentionally remains dependency-free and directly openable whil
 **Simulation first, spectacle second.**
 
 If the operating logic is believable in a simple top-down view, richer rendering can be layered on without rewriting the brain of the ride.
+
+
+## Tests
+
+On Windows, run:
+
+```powershell
+.\run-tests.cmd
+```
+
+The test runner checks JavaScript syntax, DOM contracts, graph topology, editable control boundaries, reservation exclusivity, lockout behavior, and maintenance switch-edge behavior.
+
+## Credits drill
+
+Use **Run Full Drill** in the Operations Lab. It automatically drives:
+
+`fault → cascade → recovery → maintenance → return to service`
+
+The drill reports PASS only if it reaches normal service without a safety stop.

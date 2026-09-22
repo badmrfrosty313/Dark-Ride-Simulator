@@ -44,6 +44,15 @@
     scenarioSurgeBtn: document.getElementById("scenarioSurgeBtn"),
     clearScenarioBtn: document.getElementById("clearScenarioBtn"),
     alarmList: document.getElementById("alarmList"),
+    evacuateBtn: document.getElementById("evacuateBtn"),
+    recoveryCheckBtn: document.getElementById("recoveryCheckBtn"),
+    designModeBtn: document.getElementById("designModeBtn"),
+    exportLayoutBtn: document.getElementById("exportLayoutBtn"),
+    importLayoutBtn: document.getElementById("importLayoutBtn"),
+    resetLayoutBtn: document.getElementById("resetLayoutBtn"),
+    layoutFileInput: document.getElementById("layoutFileInput"),
+    designHint: document.getElementById("designHint"),
+    showBoard: document.getElementById("showBoard"),
   };
 
   const CONFIG = {
@@ -61,22 +70,10 @@
     initialQueue: 24,
   };
 
-  const route = [
-    { x: 175, y: 610 },
-    { x: 350, y: 610 },
-    { x: 500, y: 555 },
-    { x: 575, y: 455 },
-    { x: 720, y: 420 },
-    { x: 915, y: 465 },
-    { x: 1015, y: 355 },
-    { x: 930, y: 225 },
-    { x: 765, y: 165 },
-    { x: 595, y: 210 },
-    { x: 475, y: 315 },
-    { x: 310, y: 285 },
-    { x: 190, y: 395 },
-    { x: 175, y: 610 },
-  ];
+  let routeGraph = new window.DarkRideRouteGraph.RouteGraph(
+    window.DarkRideRouteGraph.defaultLayout()
+  );
+  let route = routeGraph.mainlineCoordinates();
 
   const zones = [
     { name: "Load / Unload", x: 95, y: 555, w: 325, h: 105, fill: "rgba(41, 105, 124, 0.15)", stroke: "#28596a" },
@@ -86,34 +83,56 @@
     { name: "Finale", x: 250, y: 225, w: 300, h: 150, fill: "rgba(75, 104, 65, 0.12)", stroke: "#506d49" },
   ];
 
-  const segments = [];
+  let segments = [];
   let totalLength = 0;
 
-  for (let i = 0; i < route.length - 1; i += 1) {
-    const a = route[i];
-    const b = route[i + 1];
-    const length = Math.hypot(b.x - a.x, b.y - a.y);
-    segments.push({ a, b, length, start: totalLength });
-    totalLength += length;
-  }
-
-  const blocks = [
+  const DEFAULT_BLOCK_DEFINITIONS = [
     { id: "B0", name: "Station", startRatio: 0.00, endRatio: 0.15 },
     { id: "B1", name: "Gallery", startRatio: 0.15, endRatio: 0.32 },
     { id: "B2", name: "Machine Hall", startRatio: 0.32, endRatio: 0.49 },
     { id: "B3", name: "The Void", startRatio: 0.49, endRatio: 0.66 },
     { id: "B4", name: "Finale", startRatio: 0.66, endRatio: 0.84 },
     { id: "B5", name: "Return", startRatio: 0.84, endRatio: 1.00 },
-  ].map((block) => ({
-    ...block,
-    start: block.startRatio * totalLength,
-    end: block.endRatio * totalLength,
-  }));
+  ];
+
+  let blockDefinitions = DEFAULT_BLOCK_DEFINITIONS.map((block) => ({ ...block }));
+  let blocks = [];
+  let maintenanceBay = { x: 82, y: 690 };
+
+  function rebuildRouteGeometry() {
+    route = routeGraph.mainlineCoordinates();
+    segments = [];
+    totalLength = 0;
+
+    for (let i = 0; i < route.length - 1; i += 1) {
+      const a = route[i];
+      const b = route[i + 1];
+      const length = Math.hypot(b.x - a.x, b.y - a.y);
+      segments.push({ a, b, length, start: totalLength });
+      totalLength += length;
+    }
+
+    blocks = blockDefinitions.map((block) => ({
+      ...block,
+      start: block.startRatio * totalLength,
+      end: block.endRatio * totalLength,
+    }));
+
+    const maintenanceNode = routeGraph.node(routeGraph.maintenance.bayNodeId);
+    maintenanceBay = { x: maintenanceNode.x, y: maintenanceNode.y };
+  }
+
+  rebuildRouteGeometry();
 
   let vehicles = [];
   let nextVehicleNumber = 1;
   let selectedVehicleId = null;
   let rideStopped = false;
+  let rideStopSource = "NONE";
+  let evacuationMode = false;
+  let evacuatedGuests = 0;
+  let designMode = false;
+  let draggedNodeId = null;
   let autoDispatch = false;
   let autoDispatchClock = 0;
   let completedCycles = 0;
@@ -123,13 +142,78 @@
   const blockHoldLog = new Set();
   const lockedBlocks = new Set();
   const safetyLatch = new Set();
-  const maintenanceBay = { x: 82, y: 690 };
+  const safetyViolationFrames = new Map();
 
   let guestQueue = CONFIG.initialQueue;
   let guestsLoaded = 0;
   let guestCompletions = 0;
   let guestArrivalCarry = 0;
   let pendingScenario = null;
+
+  const showTimelines = [
+    { zone: "Scene 1 // The Gallery", duration: 5.5 },
+    { zone: "Scene 2 // Machine Hall", duration: 6.0 },
+    { zone: "Scene 3 // The Void", duration: 7.0 },
+    { zone: "Finale", duration: 5.0 },
+  ];
+
+  const showStates = new Map(
+    showTimelines.map((show) => [show.zone, { phase: "IDLE", timer: 0, vehicleId: null }])
+  );
+
+  function assertRideStop(source, message) {
+    rideStopped = true;
+    rideStopSource = source;
+    if (message) logEvent("STOP", message, "error");
+  }
+
+  function clearRideStop(source = "Operator") {
+    if (!rideStopped) return true;
+
+    if (rideStopSource === "SAFETY" && safetyLatch.size > 0) {
+      logEvent("DENIED", "Safety stop cannot release while a safety violation is active.", "warn");
+      return false;
+    }
+
+    if (rideStopSource === "EVACUATION" && evacuationMode) {
+      logEvent("DENIED", "Use Recovery Check to exit evacuation mode.", "warn");
+      return false;
+    }
+
+    rideStopped = false;
+    rideStopSource = "NONE";
+    logEvent("RECOVER", `Ride stop released by ${source}.`, "good");
+    return true;
+  }
+
+  function activateShow(zoneName, vehicleId) {
+    const timeline = showTimelines.find((show) => show.zone === zoneName);
+    if (!timeline) return;
+
+    const state = showStates.get(zoneName);
+    state.phase = "ACTIVE";
+    state.timer = timeline.duration;
+    state.vehicleId = vehicleId;
+    logEvent("SHOW", `${zoneName} active for ${vehicleId}.`, "good");
+  }
+
+  function updateShowControl(dt) {
+    for (const timeline of showTimelines) {
+      const state = showStates.get(timeline.zone);
+      if (state.phase === "IDLE") continue;
+
+      state.timer = Math.max(0, state.timer - dt);
+
+      if (state.phase === "ACTIVE" && state.timer <= 0) {
+        state.phase = "RESET";
+        state.timer = 1.5;
+        logEvent("SHOW", `${timeline.zone} resetting after ${state.vehicleId || "vehicle"}.`);
+      } else if (state.phase === "RESET" && state.timer <= 0) {
+        state.phase = "IDLE";
+        state.vehicleId = null;
+      }
+    }
+  }
 
   function nowLabel() {
     const total = Math.floor(simulationSeconds);
@@ -212,12 +296,12 @@
   }
 
   function maintenancePoint(vehicle) {
-    const station = pointAtDistance(0);
+    const [station, bay] = routeGraph.maintenanceCoordinates();
     const t = Math.max(0, Math.min(1, vehicle.maintenanceProgress));
     return {
-      x: station.x + (maintenanceBay.x - station.x) * t,
-      y: station.y + (maintenanceBay.y - station.y) * t,
-      heading: Math.atan2(maintenanceBay.y - station.y, maintenanceBay.x - station.x),
+      x: station.x + (bay.x - station.x) * t,
+      y: station.y + (bay.y - station.y) * t,
+      heading: Math.atan2(bay.y - station.y, bay.x - station.x),
     };
   }
 
@@ -610,6 +694,7 @@
     if (zoneName !== vehicle.lastZoneName) {
       if (zone) {
         logEvent("TRIGGER", `${vehicle.id} entered ${zone.name}.`);
+        activateShow(zone.name, vehicle.id);
       }
       vehicle.lastZoneName = zoneName;
     }
@@ -617,6 +702,7 @@
 
   function update(dt) {
     simulationSeconds += dt;
+    updateShowControl(dt);
 
     const arrivalRate = Number(ui.arrivalRateRange.value);
     guestArrivalCarry += (arrivalRate * dt) / 60;
@@ -722,9 +808,15 @@
     for (let i = 0; i < route.length - 1; i += 1) {
       const point = route[i];
       ctx.beginPath();
-      ctx.arc(point.x, point.y, 3.5, 0, Math.PI * 2);
-      ctx.fillStyle = "#5b7885";
+      ctx.arc(point.x, point.y, designMode ? 7 : 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = designMode ? "#ffd66b" : "#5b7885";
       ctx.fill();
+
+      if (designMode) {
+        ctx.fillStyle = "#d9e8ee";
+        ctx.font = "700 9px ui-sans-serif, system-ui";
+        ctx.fillText(point.id || `N${i}`, point.x + 9, point.y - 8);
+      }
     }
 
     ctx.restore();
@@ -761,7 +853,7 @@
   }
 
   function drawMaintenanceBay() {
-    const station = pointAtDistance(0);
+    const [station, bay] = routeGraph.maintenanceCoordinates();
 
     ctx.save();
     ctx.strokeStyle = "#526270";
@@ -769,18 +861,18 @@
     ctx.setLineDash([6, 7]);
     ctx.beginPath();
     ctx.moveTo(station.x, station.y);
-    ctx.lineTo(maintenanceBay.x, maintenanceBay.y);
+    ctx.lineTo(bay.x, bay.y);
     ctx.stroke();
     ctx.setLineDash([]);
 
     ctx.fillStyle = "rgba(82, 98, 112, 0.12)";
     ctx.strokeStyle = "#526270";
     ctx.lineWidth = 2;
-    ctx.fillRect(35, 655, 115, 48);
-    ctx.strokeRect(35, 655, 115, 48);
+    ctx.fillRect(bay.x - 48, bay.y - 22, 96, 44);
+    ctx.strokeRect(bay.x - 48, bay.y - 22, 96, 44);
     ctx.fillStyle = "#8ea3ad";
     ctx.font = "800 10px ui-sans-serif, system-ui";
-    ctx.fillText("MAINTENANCE", 45, 674);
+    ctx.fillText("MAINT", bay.x - 24, bay.y + 4);
     ctx.restore();
   }
 
@@ -885,22 +977,26 @@
   }
 
   function runSafetyDiagnostics() {
+    const activeKeys = new Set();
+
     for (const block of blocks) {
       const occupants = blockOccupants(block.id);
       const overlapKey = `OVERLAP:${block.id}`;
 
       if (occupants.length > 1) {
-        if (!safetyLatch.has(overlapKey)) {
+        activeKeys.add(overlapKey);
+        const frames = (safetyViolationFrames.get(overlapKey) || 0) + 1;
+        safetyViolationFrames.set(overlapKey, frames);
+
+        if (frames >= 3 && !safetyLatch.has(overlapKey)) {
           safetyLatch.add(overlapKey);
-          rideStopped = true;
+          assertRideStop("SAFETY");
           logEvent(
             "SAFETY",
-            `${block.id} occupancy violation: ${occupants.map((vehicle) => vehicle.id).join(", ")}. Ride stop asserted.`,
+            `${block.id} occupancy violation persisted: ${occupants.map((vehicle) => vehicle.id).join(", ")}. Safety stop asserted.`,
             "error"
           );
         }
-      } else {
-        safetyLatch.delete(overlapKey);
       }
 
       const owner = blockReservations.get(block.id);
@@ -908,17 +1004,26 @@
       const conflictKey = `RESERVATION:${block.id}`;
 
       if (conflict) {
-        if (!safetyLatch.has(conflictKey)) {
+        activeKeys.add(conflictKey);
+        const frames = (safetyViolationFrames.get(conflictKey) || 0) + 1;
+        safetyViolationFrames.set(conflictKey, frames);
+
+        if (frames >= 3 && !safetyLatch.has(conflictKey)) {
           safetyLatch.add(conflictKey);
-          rideStopped = true;
+          assertRideStop("SAFETY");
           logEvent(
             "SAFETY",
-            `${block.id} reservation conflict detected. Ride stop asserted.`,
+            `${block.id} reservation conflict persisted. Safety stop asserted.`,
             "error"
           );
         }
-      } else {
-        safetyLatch.delete(conflictKey);
+      }
+    }
+
+    for (const key of [...safetyViolationFrames.keys()]) {
+      if (!activeKeys.has(key)) {
+        safetyViolationFrames.delete(key);
+        safetyLatch.delete(key);
       }
     }
   }
@@ -964,24 +1069,50 @@
 
     if (pendingScenario) alarms.push({ text: "B3 CASCADE DRILL ARMED", warn: true });
     for (const key of safetyLatch) alarms.push({ text: `SAFETY ${key}`, warn: false });
-    if (rideStopped) alarms.push({ text: "RIDE STOP ACTIVE", warn: false });
+    if (evacuationMode) alarms.push({ text: `EVACUATION ACTIVE // ${evacuatedGuests} guests evacuated`, warn: false });
+    if (rideStopped) alarms.push({ text: `${rideStopSource} RIDE STOP ACTIVE`, warn: false });
 
     ui.alarmList.innerHTML = alarms.length
       ? alarms.map((alarm) => `<div class="alarm-item ${alarm.warn ? "warn" : ""}">${alarm.text}</div>`).join("")
       : "No active alarms.";
   }
 
+  function renderShowBoard() {
+    ui.showBoard.innerHTML = showTimelines.map((timeline) => {
+      const state = showStates.get(timeline.zone);
+      const detail = state.phase === "IDLE"
+        ? "Ready"
+        : `${state.phase} // ${state.vehicleId || "reset"} // ${state.timer.toFixed(1)}s`;
+      return `<div class="show-cue ${state.phase.toLowerCase()}">
+        <span>${timeline.zone}</span>
+        <strong>${detail}</strong>
+      </div>`;
+    }).join("");
+  }
+
   function updateUi() {
     const selected = selectedVehicle();
     const faultCount = vehicles.filter((vehicle) => vehicle.faulted).length;
 
-    ui.dispatchBtn.disabled = rideStopped || !stationClear();
-    ui.rideStopBtn.textContent = rideStopped ? "Release Ride Stop" : "Ride Stop";
+    ui.dispatchBtn.disabled = rideStopped || evacuationMode || !stationClear();
+    ui.rideStopBtn.textContent = rideStopped
+      ? rideStopSource === "SAFETY"
+        ? "Release Safety Stop"
+        : rideStopSource === "EVACUATION"
+          ? "Evacuation Active"
+          : "Release Ride Stop"
+      : "Ride Stop";
+    ui.rideStopBtn.disabled = rideStopSource === "EVACUATION";
+    ui.evacuateBtn.disabled = evacuationMode;
+    ui.recoveryCheckBtn.disabled = !evacuationMode;
     ui.autoDispatchBtn.textContent = `Auto Dispatch: ${autoDispatch ? "ON" : "OFF"}`;
     ui.speedValue.textContent = `${ui.speedRange.value}%`;
 
-    if (rideStopped) {
-      ui.systemStatus.textContent = "RIDE STOP";
+    if (evacuationMode) {
+      ui.systemStatus.textContent = "EVACUATION";
+      ui.systemStatus.classList.add("stop");
+    } else if (rideStopped) {
+      ui.systemStatus.textContent = rideStopSource === "SAFETY" ? "SAFETY STOP" : "RIDE STOP";
       ui.systemStatus.classList.add("stop");
     } else if (faultCount > 0) {
       ui.systemStatus.textContent = "SYSTEM DEGRADED";
@@ -1005,6 +1136,12 @@
 
     renderBlockBoard();
     renderAlarms();
+    renderShowBoard();
+    ui.designModeBtn.textContent = `Design Mode: ${designMode ? "ON" : "OFF"}`;
+    ui.designHint.textContent = designMode
+      ? "Drag gold route nodes. Design mode holds the ride stopped."
+      : "Design mode off. Vehicles own the floor.";
+    canvas.parentElement.classList.toggle("design-active", designMode);
 
     if (!selected) {
       ui.vehicleEmpty.classList.remove("hidden");
@@ -1065,6 +1202,11 @@
     nextVehicleNumber = 1;
     selectedVehicleId = null;
     rideStopped = false;
+    rideStopSource = "NONE";
+    evacuationMode = false;
+    evacuatedGuests = 0;
+    designMode = false;
+    draggedNodeId = null;
     autoDispatch = false;
     autoDispatchClock = 0;
     completedCycles = 0;
@@ -1078,6 +1220,12 @@
     blockHoldLog.clear();
     lockedBlocks.clear();
     safetyLatch.clear();
+    safetyViolationFrames.clear();
+    for (const state of showStates.values()) {
+      state.phase = "IDLE";
+      state.timer = 0;
+      state.vehicleId = null;
+    }
     ui.arrivalRateRange.value = "24";
     ui.eventLog.innerHTML = "";
 
@@ -1108,12 +1256,11 @@
   });
 
   ui.rideStopBtn.addEventListener("click", () => {
-    rideStopped = !rideStopped;
-    logEvent(
-      rideStopped ? "STOP" : "RECOVER",
-      rideStopped ? "Ride stop activated. All vehicle motion inhibited." : "Ride stop released. Vehicle motion restored.",
-      rideStopped ? "error" : "good"
-    );
+    if (rideStopped) {
+      clearRideStop("Operator");
+    } else {
+      assertRideStop("MANUAL", "Manual ride stop activated. All vehicle motion inhibited.");
+    }
     updateUi();
   });
 
@@ -1191,7 +1338,10 @@
     lockedBlocks.clear();
     autoDispatch = false;
     rideStopped = false;
+    rideStopSource = "NONE";
+    evacuationMode = false;
     safetyLatch.clear();
+    safetyViolationFrames.clear();
 
     for (const vehicle of vehicles) {
       if (vehicle.faulted) recoverVehicle(vehicle);
@@ -1201,11 +1351,179 @@
     updateUi();
   });
 
+  ui.evacuateBtn.addEventListener("click", () => {
+    if (evacuationMode) return;
+
+    evacuationMode = true;
+    autoDispatch = false;
+    evacuatedGuests = 0;
+
+    for (const vehicle of vehicles) {
+      evacuatedGuests += vehicle.onboardGuests;
+      vehicle.onboardGuests = 0;
+      if (vehicle.maintenanceState === "NONE") {
+        vehicle.state = "EVACUATED";
+      }
+    }
+
+    assertRideStop("EVACUATION");
+    logEvent("EVAC", `Ride evacuation initiated. ${evacuatedGuests} onboard guests cleared from ride vehicles.`, "error");
+    updateUi();
+  });
+
+  ui.recoveryCheckBtn.addEventListener("click", () => {
+    if (!evacuationMode) return;
+
+    const faults = vehicles.filter((vehicle) => vehicle.faulted);
+    runSafetyDiagnostics();
+
+    if (faults.length > 0 || safetyLatch.size > 0) {
+      logEvent(
+        "RECOVERY",
+        `Recovery check failed: ${faults.length} vehicle fault(s), ${safetyLatch.size} safety violation(s).`,
+        "warn"
+      );
+      updateUi();
+      return;
+    }
+
+    evacuationMode = false;
+    rideStopped = false;
+    rideStopSource = "NONE";
+
+    for (const vehicle of vehicles) {
+      if (vehicle.maintenanceState === "NONE") {
+        vehicle.state = vehicle.dwellRemaining > 0 ? "STATION DWELL" : "RUNNING";
+      }
+    }
+
+    logEvent("RECOVERY", "Evacuation recovery check passed. Ride returned to controlled operation.", "good");
+    updateUi();
+  });
+
+  ui.designModeBtn.addEventListener("click", () => {
+    designMode = !designMode;
+
+    if (designMode) {
+      assertRideStop("DESIGN");
+      logEvent("DESIGN", "Design mode enabled. Drag route nodes to reshape the mainline.", "warn");
+    } else if (rideStopSource === "DESIGN") {
+      rideStopped = false;
+      rideStopSource = "NONE";
+      logEvent("DESIGN", "Design mode disabled. Ride stop released.", "good");
+    }
+
+    updateUi();
+  });
+
+  ui.exportLayoutBtn.addEventListener("click", () => {
+    const payload = {
+      schema: "dark-ride-layout",
+      version: 1,
+      routeGraph: routeGraph.toJSON(),
+      blocks: blockDefinitions.map((block) => ({ ...block })),
+      zones: zones.map((zone) => ({ ...zone })),
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "dark-ride-layout.json";
+    link.click();
+    URL.revokeObjectURL(url);
+    logEvent("LAYOUT", "Ride layout exported.", "good");
+  });
+
+  ui.importLayoutBtn.addEventListener("click", () => {
+    ui.layoutFileInput.value = "";
+    ui.layoutFileInput.click();
+  });
+
+  ui.layoutFileInput.addEventListener("change", async () => {
+    const file = ui.layoutFileInput.files && ui.layoutFileInput.files[0];
+    if (!file) return;
+
+    try {
+      const data = JSON.parse(await file.text());
+      if (data.schema !== "dark-ride-layout" || !data.routeGraph) {
+        throw new Error("Unsupported layout file.");
+      }
+
+      routeGraph.load(data.routeGraph);
+      if (Array.isArray(data.blocks) && data.blocks.length === DEFAULT_BLOCK_DEFINITIONS.length) {
+        blockDefinitions = data.blocks.map((block) => ({ ...block }));
+      }
+
+      rebuildRouteGeometry();
+      resetSimulation();
+      logEvent("LAYOUT", `Imported ${file.name}.`, "good");
+    } catch (error) {
+      logEvent("LAYOUT", `Import failed: ${error.message}`, "error");
+    }
+
+    updateUi();
+  });
+
+  ui.resetLayoutBtn.addEventListener("click", () => {
+    routeGraph.load(window.DarkRideRouteGraph.defaultLayout());
+    blockDefinitions = DEFAULT_BLOCK_DEFINITIONS.map((block) => ({ ...block }));
+    rebuildRouteGeometry();
+    resetSimulation();
+    logEvent("LAYOUT", "Default route graph restored.", "good");
+    updateUi();
+  });
+
   ui.clearLogBtn.addEventListener("click", () => {
     ui.eventLog.innerHTML = "";
   });
 
-  canvas.addEventListener("click", selectVehicleFromPointer);
+  function canvasPoint(event) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: ((event.clientX - rect.left) / rect.width) * canvas.width,
+      y: ((event.clientY - rect.top) / rect.height) * canvas.height,
+    };
+  }
+
+  canvas.addEventListener("pointerdown", (event) => {
+    if (!designMode) return;
+    const point = canvasPoint(event);
+    const node = routeGraph.closestMainlineNode(point.x, point.y, 34);
+    if (!node) return;
+
+    draggedNodeId = node.id;
+    canvas.setPointerCapture(event.pointerId);
+  });
+
+  canvas.addEventListener("pointermove", (event) => {
+    if (!designMode || !draggedNodeId) return;
+    const point = canvasPoint(event);
+    routeGraph.setNodePosition(
+      draggedNodeId,
+      Math.max(30, Math.min(canvas.width - 30, point.x)),
+      Math.max(30, Math.min(canvas.height - 30, point.y))
+    );
+    rebuildRouteGeometry();
+
+    for (const vehicle of vehicles) {
+      vehicle.distance = normalizeDistance(vehicle.distance);
+    }
+  });
+
+  canvas.addEventListener("pointerup", (event) => {
+    if (!designMode || !draggedNodeId) return;
+    logEvent("DESIGN", `${draggedNodeId} waypoint moved.`);
+    draggedNodeId = null;
+    if (canvas.hasPointerCapture(event.pointerId)) {
+      canvas.releasePointerCapture(event.pointerId);
+    }
+    updateUi();
+  });
+
+  canvas.addEventListener("click", (event) => {
+    if (!designMode) selectVehicleFromPointer(event);
+  });
 
   function frame(timestamp) {
     const rawDt = (timestamp - lastFrameTime) / 1000;

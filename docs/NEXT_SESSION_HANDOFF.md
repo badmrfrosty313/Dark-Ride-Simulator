@@ -69,3 +69,44 @@ Build a formal route graph.
 Do not bolt true branching paths onto the scalar-loop model. The next structural move should introduce nodes, directed edges, switches, merges, and edge/block reservations while preserving current behavior.
 
 First branch to migrate onto the graph: the maintenance spur.
+
+
+## Agentic expansion checkpoint
+
+Latest implementation now includes:
+
+- `src/routeGraph.js` as canonical graph model
+- graph-owned control block transitions
+- shared tested ReservationTable
+- graph maintenance switch/branch lifecycle
+- design mode with draggable route nodes
+- editable block boundaries
+- JSON layout import/export
+- show-control timelines
+- evacuation/recovery
+- hardened safety-stop semantics
+- automated full operations drill
+- `tests/static-contract.test.js`
+- `tests/routeGraph.test.js`
+- `run-tests.cmd`
+
+### Final acceptance
+
+Run:
+
+```powershell
+git pull
+.\run-tests.cmd
+start index.html
+```
+
+Then click **Run Full Drill**.
+
+A successful V1 acceptance result is:
+
+`PASS: fault → cascade → recovery → maintenance → return completed with no safety violation.`
+
+If that succeeds, complete the two remaining Todoist items:
+
+- Smoke-test the Operations Lab build
+- See credits: complete full operations scenario

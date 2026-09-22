@@ -37,6 +37,22 @@
     ],
     mainline: ["N0","N1","N2","N3","N4","N5","N6","N7","N8","N9","N10","N11","N12"],
     maintenance: { switchNodeId: "N0", bayNodeId: "M0", edgeId: "EM0" },
+    controlBlocks: [
+      { id: "B0", name: "Station", startRatio: 0.00, endRatio: 0.15 },
+      { id: "B1", name: "Gallery", startRatio: 0.15, endRatio: 0.32 },
+      { id: "B2", name: "Machine Hall", startRatio: 0.32, endRatio: 0.49 },
+      { id: "B3", name: "The Void", startRatio: 0.49, endRatio: 0.66 },
+      { id: "B4", name: "Finale", startRatio: 0.66, endRatio: 0.84 },
+      { id: "B5", name: "Return", startRatio: 0.84, endRatio: 1.00 },
+    ],
+    controlTransitions: [
+      { from: "B0", to: "B1" },
+      { from: "B1", to: "B2" },
+      { from: "B2", to: "B3" },
+      { from: "B3", to: "B4" },
+      { from: "B4", to: "B5" },
+      { from: "B5", to: "B0" },
+    ],
   };
 
   class RouteGraph {
@@ -51,6 +67,8 @@
       this.edges = clone.edges;
       this.mainline = clone.mainline;
       this.maintenance = clone.maintenance;
+      this.controlBlocks = clone.controlBlocks || [];
+      this.controlTransitions = clone.controlTransitions || [];
       this.validate();
     }
 
@@ -68,6 +86,13 @@
       for (const edge of this.edges) {
         if (!this.nodes.has(edge.from) || !this.nodes.has(edge.to)) {
           throw new Error(`Edge ${edge.id} references a missing node.`);
+        }
+      }
+
+      const blockIds = new Set(this.controlBlocks.map((block) => block.id));
+      for (const transition of this.controlTransitions) {
+        if (!blockIds.has(transition.from) || !blockIds.has(transition.to)) {
+          throw new Error(`Control transition ${transition.from} -> ${transition.to} references a missing block.`);
         }
       }
 
@@ -96,6 +121,37 @@
 
     maintenanceEdge() {
       return this.edge(this.maintenance.edgeId);
+    }
+
+    controlBlock(id) {
+      return this.controlBlocks.find((block) => block.id === id) || null;
+    }
+
+    nextControlBlock(id) {
+      const transition = this.controlTransitions.find((candidate) => candidate.from === id);
+      return transition ? this.controlBlock(transition.to) : null;
+    }
+
+    setControlBlocks(blocks) {
+      this.controlBlocks = blocks.map((block) => ({ ...block }));
+      this.validate();
+    }
+
+    setControlBoundary(blockId, ratio) {
+      const index = this.controlBlocks.findIndex((block) => block.id === blockId);
+      if (index < 0 || index >= this.controlBlocks.length - 1) return false;
+
+      const current = this.controlBlocks[index];
+      const next = this.controlBlocks[index + 1];
+      const min = current.startRatio + 0.05;
+      const max = next.endRatio - 0.05;
+      const value = Math.max(min, Math.min(max, Number(ratio)));
+
+      if (!Number.isFinite(value)) return false;
+
+      current.endRatio = value;
+      next.startRatio = value;
+      return true;
     }
 
     setNodePosition(id, x, y) {
@@ -146,6 +202,8 @@
         edges: this.edges.map((edge) => ({ ...edge })),
         mainline: [...this.mainline],
         maintenance: { ...this.maintenance },
+        controlBlocks: this.controlBlocks.map((block) => ({ ...block })),
+        controlTransitions: this.controlTransitions.map((transition) => ({ ...transition })),
       };
     }
   }

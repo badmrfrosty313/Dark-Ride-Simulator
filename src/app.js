@@ -160,7 +160,6 @@
 
   function stationClear() {
     return !vehicles.some((vehicle) => {
-      if (vehicle.faulted) return false;
       const outgoing = vehicle.distance;
       const incoming = totalLength - vehicle.distance;
       return outgoing < CONFIG.dispatchClearance || incoming < 95;
